@@ -126,6 +126,105 @@ export function validateReport(draft: ReportDraft): ValidationIssue[] {
   return issues
 }
 
+export interface TextReplacementResult {
+  text: string
+  count: number
+}
+
+export interface DraftReplacementResult {
+  draft: ReportDraft
+  count: number
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/** Apply one user-confirmed correction without sending report content to a model. */
+export function replaceTerminologyInText(
+  text: string,
+  sourceValue: string,
+  normalizedValue: string,
+): TextReplacementResult {
+  const source = sourceValue.trim()
+  const normalized = normalizedValue.trim()
+  if (!source || !normalized || source.toLocaleLowerCase() === normalized.toLocaleLowerCase()) {
+    return { text, count: 0 }
+  }
+
+  let count = 0
+  const matcher = new RegExp(escapeRegExp(source), 'giu')
+  return {
+    text: text.replace(matcher, () => {
+      count += 1
+      return normalized
+    }),
+    count,
+  }
+}
+
+export function applyTerminologyToDraft(
+  draft: ReportDraft,
+  sourceValue: string,
+  normalizedValue: string,
+): DraftReplacementResult {
+  let count = 0
+  const replaceText = (text: string) => {
+    const replaced = replaceTerminologyInText(text, sourceValue, normalizedValue)
+    count += replaced.count
+    return replaced.text
+  }
+  const replaceBlock = (block: ReportBlock): ReportBlock => {
+    switch (block.type) {
+      case 'paragraph':
+        return { ...block, text: replaceText(block.text) }
+      case 'bullet_list':
+        return { ...block, items: block.items.map(replaceText) }
+      case 'project_table':
+        return {
+          ...block,
+          columns: block.columns.map(replaceText),
+          rows: block.rows.map((row) => row.map(replaceText)),
+        }
+      case 'status_cards':
+        return {
+          ...block,
+          cards: block.cards.map((card) => ({
+            ...card,
+            title: replaceText(card.title),
+            status: replaceText(card.status),
+            details: card.details?.map(replaceText),
+          })),
+        }
+      case 'callout':
+        return {
+          ...block,
+          title: block.title === undefined ? undefined : replaceText(block.title),
+          text: replaceText(block.text),
+        }
+    }
+  }
+
+  return {
+    draft: {
+      ...draft,
+      title: replaceText(draft.title),
+      executive_summary: replaceText(draft.executive_summary),
+      summary_cards: draft.summary_cards.map((card) => ({
+        ...card,
+        label: replaceText(card.label),
+        value: replaceText(card.value),
+      })),
+      sections: draft.sections.map((section) => ({
+        ...section,
+        title: replaceText(section.title),
+        blocks: section.blocks.map(replaceBlock),
+      })),
+    },
+    count,
+  }
+}
+
 interface WorkflowInput {
   transcript: string
   projectId: string

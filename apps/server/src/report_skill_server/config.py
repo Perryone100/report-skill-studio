@@ -25,6 +25,27 @@ class Settings(BaseSettings):
     openai_compatible_base_url: str | None = None
     openai_compatible_api_key: SecretStr | None = None
     openai_compatible_model: str | None = None
+    openai_compatible_models: str | None = None
+
+    @property
+    def openai_compatible_model_names(self) -> list[str]:
+        """Return de-duplicated model ids while preserving configured order.
+
+        ``RSS_OPENAI_COMPATIBLE_MODELS`` is the multi-model setting.  The
+        singular setting remains supported so existing local ``.env`` files
+        keep working unchanged.
+        """
+
+        raw_models = self.openai_compatible_models or self.openai_compatible_model or ""
+        model_names: list[str] = []
+        seen: set[str] = set()
+        for candidate in raw_models.replace("\n", ",").split(","):
+            model_name = candidate.strip()
+            if not model_name or model_name in seen:
+                continue
+            seen.add(model_name)
+            model_names.append(model_name)
+        return model_names
 
     @property
     def database_path(self) -> Path:

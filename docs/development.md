@@ -64,19 +64,22 @@ cp .env.example .env
 | `RSS_CORS_ORIGINS` | 逗号分隔的前端来源列表 |
 | `RSS_OPENAI_COMPATIBLE_BASE_URL` | 可选兼容服务地址，不含 `/chat/completions` |
 | `RSS_OPENAI_COMPATIBLE_API_KEY` | 可选兼容服务密钥 |
-| `RSS_OPENAI_COMPATIBLE_MODEL` | 可选模型标识 |
+| `RSS_OPENAI_COMPATIBLE_MODELS` | 可选模型标识列表，逗号分隔；每项显示为一个写作模型选项 |
+| `RSS_OPENAI_COMPATIBLE_MODEL` | 兼容原配置的单模型标识，仅在复数配置为空时使用 |
 | `VITE_API_BASE_URL` | 前端访问的 API 地址，默认 `http://127.0.0.1:8000/api` |
 | `VITE_USE_MOCK_API` | 设为 `true` 时显式启用前端 mock API；默认 `false` |
 
-三个 OpenAI-compatible 变量同时设置后，服务端才会注册 `openai-compatible` provider；保持为空时，开发环境只提供不会联网的 `mock` provider。
+地址、密钥和至少一个模型同时设置后，服务端才会注册对应的 OpenAI-compatible 写作模型；保持为空时，开发环境只提供不会联网的 `mock` provider。多个模型共用同一兼容 API 地址和密钥，每个模型都会成为下拉框中的独立选项。
 
 `.env` 已被 Git 忽略，但它仍是本机上的明文文件。真实密钥更适合在启动前通过 shell 或系统密钥管理工具注入，例如：
 
 ```bash
 export RSS_OPENAI_COMPATIBLE_BASE_URL="https://provider.example/v1"
 export RSS_OPENAI_COMPATIBLE_API_KEY="replace-in-your-shell-only"
-export RSS_OPENAI_COMPATIBLE_MODEL="your-model-id"
+export RSS_OPENAI_COMPATIBLE_MODELS="your-standard-model,your-economy-model"
 ```
+
+模型配置变化后需要重启服务端。已有的 `RSS_OPENAI_COMPATIBLE_MODEL` 无需立即修改，仍可继续使用。
 
 不要把真实密钥写入 `.env.example`、测试夹具、SQLite、日志或提交记录。
 

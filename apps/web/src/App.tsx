@@ -15,7 +15,12 @@ import { Icon } from './components/Icons'
 import { ReportEditor } from './components/ReportEditor'
 import { Sidebar } from './components/Sidebar'
 import { TerminologyMemoryPanel } from './components/TerminologyMemoryPanel'
-import { deriveWorkflowState, validateReport } from './domain/workbench'
+import {
+  applyTerminologyToDraft,
+  deriveWorkflowState,
+  replaceTerminologyInText,
+  validateReport,
+} from './domain/workbench'
 
 type LoadState = 'loading' | 'ready' | 'error'
 
@@ -257,17 +262,48 @@ function App() {
     }
   }
 
+  const applyTerminologyToCurrentWork = (sourceValue: string, normalizedValue: string) => {
+    const transcriptResult = replaceTerminologyInText(transcript, sourceValue, normalizedValue)
+    if (transcriptResult.count > 0) setTranscript(transcriptResult.text)
+
+    let reportCount = 0
+    if (draft && !confirmed) {
+      const reportResult = applyTerminologyToDraft(draft, sourceValue, normalizedValue)
+      reportCount = reportResult.count
+      if (reportCount > 0) {
+        setDraft(reportResult.draft)
+        setServerIssues([])
+        setConfirmed(false)
+      }
+    }
+    return { transcriptCount: transcriptResult.count, reportCount }
+  }
+
   const handleSaveTerminology = async (sourceValue: string, normalizedValue: string) => {
     if (!projectId) return
     setActionError('')
     try {
       const saved = await apiClient.saveTerminologyMemory({ projectId, sourceValue, normalizedValue })
       setTerminologyMemory((current) => [saved, ...current.filter((item) => item.id !== saved.id)])
-      setNotice(`已记住“${sourceValue} → ${normalizedValue}”，下次生成自动应用。`)
+      const applied = applyTerminologyToCurrentWork(saved.sourceValue, saved.normalizedValue)
+      const appliedMessage = applied.reportCount > 0
+        ? `并修正当前报告 ${applied.reportCount} 处`
+        : applied.transcriptCount > 0
+          ? `并修正逐字稿 ${applied.transcriptCount} 处`
+          : '；当前内容中没有发现该写法'
+      setNotice(`已记住“${saved.sourceValue} → ${saved.normalizedValue}”${appliedMessage}，下次生成继续应用。`)
     } catch (error) {
       setActionError(error instanceof Error ? error.message : '矫正规则保存失败。')
       throw error
     }
+  }
+
+  const handleApplyTerminology = (entry: TerminologyMemoryEntry) => {
+    const applied = applyTerminologyToCurrentWork(entry.sourceValue, entry.normalizedValue)
+    const total = applied.transcriptCount + applied.reportCount
+    setNotice(total > 0
+      ? `已应用“${entry.sourceValue} → ${entry.normalizedValue}”，共修正 ${total} 处。`
+      : '当前逐字稿和报告中没有发现需要替换的内容。')
   }
 
   const handleDeleteTerminology = async (entry: TerminologyMemoryEntry) => {
@@ -447,15 +483,6 @@ function App() {
             </div>
           </div>
 
-          {projectId && (
-            <TerminologyMemoryPanel
-              projectName={selectedProject?.name ?? ''}
-              entries={terminologyMemory}
-              loading={isLoadingTerminology}
-              onSave={handleSaveTerminology}
-              onDelete={handleDeleteTerminology}
-            />
-          )}
         </section>
 
         <div className="content-grid">
@@ -477,8 +504,21 @@ function App() {
             </section>
           )}
 
-          <aside className="quality-panel">
-            <div className="quality-heading">
+          <aside className="right-rail">
+            {projectId && (
+              <TerminologyMemoryPanel
+                projectName={selectedProject?.name ?? ''}
+                entries={terminologyMemory}
+                loading={isLoadingTerminology}
+                onSave={handleSaveTerminology}
+                onApply={handleApplyTerminology}
+                onDelete={handleDeleteTerminology}
+                canApplyToDraft={!confirmed && Boolean(transcript.trim() || draft)}
+              />
+            )}
+
+            <section className="quality-panel">
+              <div className="quality-heading">
               <div>
                 <span className="eyebrow">质量门禁</span>
                 <h2>自动检查</h2>
@@ -492,56 +532,57 @@ function App() {
                       : '已通过'}
                 </span>
               )}
-            </div>
-
-            {!draft ? (
-              <div className="quality-empty">
-                <Icon name="check" />
-                <p>生成报告后，将检查术语、必填章节和内部表达。</p>
               </div>
-            ) : (
-              <div className="issue-list">
-                {issues.map((issue) => (
-                  <div className={`issue-item ${issue.severity}`} key={issue.id}>
-                    <span className="issue-icon"><Icon name={issue.severity === 'info' ? 'check' : 'warning'} /></span>
-                    <div>
-                      <strong>{issue.title}<small className={`issue-source ${issue.source ?? 'local'}`}>{issue.source === 'server' ? '服务端' : '本地'}</small></strong>
-                      <p>{issue.message}</p>
-                      {issue.suggestion && <p className="issue-suggestion">建议：{issue.suggestion}</p>}
-                      {issue.field && (
-                        <button
-                          type="button"
-                          className="issue-location"
-                          onClick={() => locateReportField(issue.field!)}
-                        >
-                          定位到：{describeIssueField(issue.field, draft)}
-                        </button>
-                      )}
+
+              {!draft ? (
+                <div className="quality-empty">
+                  <Icon name="check" />
+                  <p>生成报告后，将检查术语、必填章节和内部表达。</p>
+                </div>
+              ) : (
+                <div className="issue-list">
+                  {issues.map((issue) => (
+                    <div className={`issue-item ${issue.severity}`} key={issue.id}>
+                      <span className="issue-icon"><Icon name={issue.severity === 'info' ? 'check' : 'warning'} /></span>
+                      <div>
+                        <strong>{issue.title}<small className={`issue-source ${issue.source ?? 'local'}`}>{issue.source === 'server' ? '服务端' : '本地'}</small></strong>
+                        <p>{issue.message}</p>
+                        {issue.suggestion && <p className="issue-suggestion">建议：{issue.suggestion}</p>}
+                        {issue.field && (
+                          <button
+                            type="button"
+                            className="issue-location"
+                            onClick={() => locateReportField(issue.field!)}
+                          >
+                            定位到：{describeIssueField(issue.field, draft)}
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
-            )}
+                  ))}
+                </div>
+              )}
 
-            <div className="quality-actions">
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={!workflow.canConfirm || isConfirming}
-                onClick={() => void handleConfirm()}
-              >
-                {isConfirming ? <><span className="spinner dark" /> 正在确认</> : <><Icon name="check" /> 确认内容</>}
-              </button>
-              <button
-                type="button"
-                className="primary-button"
-                disabled={!workflow.canExport || isExporting}
-                onClick={() => void handleExport()}
-              >
-                {isExporting ? <><span className="spinner" /> 正在导出</> : <><Icon name="download" /> 导出 PDF</>}
-              </button>
-              {draft && !confirmed && <p>只有错误会阻止确认；建议项不影响确认和导出。</p>}
-            </div>
+              <div className="quality-actions">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={!workflow.canConfirm || isConfirming}
+                  onClick={() => void handleConfirm()}
+                >
+                  {isConfirming ? <><span className="spinner dark" /> 正在确认</> : <><Icon name="check" /> 确认内容</>}
+                </button>
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={!workflow.canExport || isExporting}
+                  onClick={() => void handleExport()}
+                >
+                  {isExporting ? <><span className="spinner" /> 正在导出</> : <><Icon name="download" /> 导出 PDF</>}
+                </button>
+                {draft && !confirmed && <p>只有错误会阻止确认；建议项不影响确认和导出。</p>}
+              </div>
+            </section>
           </aside>
         </div>
       </main>

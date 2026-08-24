@@ -286,3 +286,54 @@ def test_rule_issues_are_saved_for_human_review(client: TestClient) -> None:
     assert "图文结合版" in saved["content"]["executive_summary"]
     confirmation = client.post(f"/api/reports/{report['id']}/confirm")
     assert confirmation.status_code == 200
+
+
+def test_generation_only_sends_relevant_terminology_hints(client: TestClient) -> None:
+    class PromptCaptureProvider(MockChatProvider):
+        id = "prompt-capture"
+
+        def __init__(self) -> None:
+            self.prompt = ""
+
+        def generate(self, **kwargs):  # type: ignore[no-untyped-def]
+            self.prompt = kwargs["prompt"]
+            return super().generate(**kwargs)
+
+    provider = PromptCaptureProvider()
+    client.app.dependency_overrides[get_provider_registry] = lambda: ProviderRegistry(
+        [provider]
+    )
+    project = client.post("/api/projects", json={"name": "项目"}).json()
+    for source, normalized in (
+        ("模块爱", "功能模块 A"),
+        ("完全无关错词", "完全无关标准词"),
+    ):
+        response = client.post(
+            "/api/memory/terms",
+            json={
+                "project_id": project["id"],
+                "source_value": source,
+                "normalized_value": normalized,
+                "scope": "project",
+                "confirmed": True,
+            },
+        )
+        assert response.status_code == 201
+
+    report = client.post(
+        "/api/reports",
+        json={
+            "project_id": project["id"],
+            "title": "提示词成本检查",
+            "transcript": "模块爱已经完成联调。",
+            "skill_id": "default-weekly-meeting",
+        },
+    ).json()
+    response = client.post(
+        f"/api/reports/{report['id']}/generate",
+        json={"provider_id": provider.id},
+    )
+
+    assert response.status_code == 200
+    assert "模块爱 → 功能模块 A" in provider.prompt
+    assert "完全无关错词" not in provider.prompt

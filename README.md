@@ -7,7 +7,7 @@ The project is currently under active MVP development.
 ## MVP workflow
 
 1. Paste or import a transcript.
-2. Select a declarative report Skill and a user-configured model provider.
+2. Select a declarative report Skill and one of the user-configured writing models.
 3. Generate a structured report draft.
 4. Review, edit, validate, and confirm the draft.
 5. Render the confirmed report to HTML and PDF.
@@ -15,6 +15,8 @@ The project is currently under active MVP development.
 
 The workbench includes a project-level terminology and spoken-correction table.
 Confirmed mappings are applied to later transcripts before model generation.
+They can also be applied immediately to the current transcript and unconfirmed
+draft without another model request.
 Validation distinguishes blocking structural errors from non-blocking writing
 suggestions, and each issue can be located back to its report field.
 

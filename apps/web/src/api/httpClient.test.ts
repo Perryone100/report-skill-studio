@@ -42,7 +42,10 @@ describe('HTTP API client', () => {
       if (path.endsWith('/projects')) return jsonResponse([{ id: 'project-1', name: '产品研发', description: '周会', created_at: '2026-08-21T10:00:00Z', updated_at: '2026-08-21T11:00:00Z' }])
       if (path.endsWith('/reports')) return jsonResponse([apiReport()])
       if (path.endsWith('/skills')) return jsonResponse([{ id: 'default-weekly-meeting', name: '默认周会', version: '0.2.1', description: '通用周会报告', locale: 'zh-CN' }])
-      if (path.endsWith('/providers')) return jsonResponse([{ id: 'mock', name: '本地演示模型', model: 'deterministic-mock', local: true, configured: true }])
+      if (path.endsWith('/providers')) return jsonResponse([
+        { id: 'mock', name: '本地演示模型', model: 'deterministic-mock', local: true, configured: true },
+        { id: 'openai-compatible:writing-economy', name: 'OpenAI-compatible API', model: 'writing-economy', local: false, configured: true },
+      ])
       return jsonResponse({ detail: 'not found' }, 404)
     })
     const client = createHttpApiClient('http://localhost:8000/api/', fetchMock as typeof fetch)
@@ -53,6 +56,11 @@ describe('HTTP API client', () => {
     expect(workspace.reports[0]).toMatchObject({ id: 'report-1', period: '2026-08-21' })
     expect(workspace.skills[0].id).toBe('default-weekly-meeting')
     expect(workspace.models[0]).toMatchObject({ id: 'mock', locality: 'local', ready: true })
+    expect(workspace.models[1]).toMatchObject({
+      id: 'openai-compatible:writing-economy',
+      name: 'writing-economy',
+      provider: 'OpenAI-compatible API',
+    })
     expect(fetchMock).toHaveBeenCalledTimes(4)
   })
 

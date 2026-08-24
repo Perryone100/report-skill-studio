@@ -12,6 +12,7 @@ def test_openai_compatible_provider_returns_json_object() -> None:
         assert payload["model"] == "test-model"
         assert payload["response_format"] == {"type": "json_object"}
         assert "根据逐字稿生成报告" in payload["messages"][1]["content"]
+        assert 'JSON Schema：{"type":"object"}' in payload["messages"][1]["content"]
         return httpx.Response(
             200,
             json={

@@ -10,7 +10,7 @@ from report_renderer import PdfRenderingUnavailableError, ReportRendererError
 from skill_engine import SkillLoadError
 
 from . import __version__
-from .config import get_settings
+from .config import Settings, get_settings
 from .models import (
     GenerateReportRequest,
     HealthResponse,
@@ -37,19 +37,26 @@ def get_store() -> SQLiteStore:
 
 @lru_cache
 def get_provider_registry() -> ProviderRegistry:
-    settings = get_settings()
+    return build_provider_registry(get_settings())
+
+
+def build_provider_registry(settings: Settings) -> ProviderRegistry:
     providers = [MockChatProvider()]
     if (
         settings.openai_compatible_base_url
         and settings.openai_compatible_api_key
-        and settings.openai_compatible_model
+        and settings.openai_compatible_model_names
     ):
-        providers.append(
-            OpenAICompatibleChatProvider(
-                base_url=settings.openai_compatible_base_url,
-                api_key=settings.openai_compatible_api_key.get_secret_value(),
-                model=settings.openai_compatible_model,
-            )
+        providers.extend(
+            [
+                OpenAICompatibleChatProvider(
+                    base_url=settings.openai_compatible_base_url,
+                    api_key=settings.openai_compatible_api_key.get_secret_value(),
+                    model=model,
+                    provider_id=f"openai-compatible:{model}",
+                )
+                for model in settings.openai_compatible_model_names
+            ]
         )
     return ProviderRegistry(providers)
 

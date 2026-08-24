@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { ReportDraft } from '../api'
-import { deriveWorkflowState, validateReport } from './workbench'
+import {
+  applyTerminologyToDraft,
+  deriveWorkflowState,
+  replaceTerminologyInText,
+  validateReport,
+} from './workbench'
 
 const validDraft = (): ReportDraft => ({
   reportId: 'report-1',
@@ -105,5 +110,32 @@ describe('deriveWorkflowState', () => {
     }
     expect(deriveWorkflowState({ ...base, isConfirmed: false }).canExport).toBe(false)
     expect(deriveWorkflowState({ ...base, isConfirmed: true }).canExport).toBe(true)
+  })
+})
+
+describe('项目术语应用', () => {
+  it('在逐字稿中以不区分大小写的方式应用已确认矫正', () => {
+    const result = replaceTerminologyInText('PinCode 已上线，pincode 待复核。', 'pincode', 'PingCode')
+    expect(result).toEqual({ text: 'PingCode 已上线，PingCode 待复核。', count: 2 })
+  })
+
+  it('一次更新报告全部五类内容块并保留结构字段', () => {
+    const draft = validDraft()
+    draft.executive_summary = '模块爱进入联调。'
+    draft.summary_cards = [{ label: '模块爱', value: '模块爱完成' }]
+    draft.sections[0].blocks = [
+      { type: 'paragraph', text: '模块爱段落' },
+      { type: 'bullet_list', items: ['模块爱计划'] },
+      { type: 'project_table', columns: ['工作项'], rows: [['模块爱']] },
+      { type: 'status_cards', cards: [{ title: '模块爱', status: '模块爱进行中', details: ['模块爱详情'] }] },
+      { type: 'callout', title: '模块爱风险', text: '模块爱需协调' },
+    ]
+
+    const result = applyTerminologyToDraft(draft, '模块爱', '功能模块 A')
+
+    expect(result.count).toBe(11)
+    expect(JSON.stringify(result.draft)).not.toContain('模块爱')
+    expect(result.draft.reportId).toBe('report-1')
+    expect(result.draft.sections[0].id).toBe('overall_conclusion')
   })
 })

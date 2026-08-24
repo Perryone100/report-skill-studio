@@ -70,18 +70,18 @@ const bootstrap: WorkspaceBootstrap = {
   ],
   models: [
     {
-      id: 'openai-compatible:configured',
-      name: 'OpenAI Compatible',
-      provider: '用户配置',
+      id: 'openai-compatible:example-writing-standard',
+      name: 'example-writing-standard',
+      provider: 'OpenAI-compatible API',
       locality: 'cloud',
       ready: true,
     },
     {
-      id: 'local:placeholder',
-      name: '本地模型',
-      provider: '尚未配置',
-      locality: 'local',
-      ready: false,
+      id: 'openai-compatible:example-writing-economy',
+      name: 'example-writing-economy',
+      provider: 'OpenAI-compatible API',
+      locality: 'cloud',
+      ready: true,
     },
   ],
 }

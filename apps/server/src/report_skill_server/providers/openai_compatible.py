@@ -19,9 +19,13 @@ class OpenAICompatibleChatProvider:
         base_url: str,
         api_key: str,
         model: str,
+        provider_id: str | None = None,
+        provider_name: str | None = None,
         timeout: float = 120.0,
         client: httpx.Client | None = None,
     ):
+        self.id = provider_id or self.id
+        self.name = provider_name or self.name
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
@@ -49,7 +53,8 @@ class OpenAICompatibleChatProvider:
                 "role": "user",
                 "content": (
                     f"报告标题：{title}\n\n"
-                    f"JSON Schema：{json.dumps(schema, ensure_ascii=False)}\n\n"
+                    "JSON Schema："
+                    f"{json.dumps(schema, ensure_ascii=False, separators=(',', ':'))}\n\n"
                     f"{prompt}"
                 ),
             },

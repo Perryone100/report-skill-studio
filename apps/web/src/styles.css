@@ -114,33 +114,37 @@ svg { width: 20px; height: 20px; }
 .generate-button:disabled, .primary-button:disabled { color: #95a1b3; background: #e6ebf1; box-shadow: none; }
 .generate-button svg, .primary-button svg, .secondary-button svg { width: 17px; height: 17px; }
 .button-help { margin: -7px 0 0; color: #9aa4b3; font-size: 9px; text-align: center; line-height: 1.45; }
-.terminology-panel { border-top: 1px solid #e8edf3; background: #fbfcfe; }
-.terminology-panel > summary { min-height: 66px; padding: 14px 23px; display: grid; grid-template-columns: 34px 1fr auto; gap: 11px; align-items: center; list-style: none; cursor: pointer; }
-.terminology-panel > summary::-webkit-details-marker { display: none; }
+.terminology-panel { border: 1px solid #dfe6ef; border-radius: 15px; background: #fff; box-shadow: 0 7px 24px #253b580c; overflow: hidden; }
+.terminology-heading { min-height: 66px; padding: 13px 14px; display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; gap: 9px; align-items: center; border-bottom: 1px solid #e7ecf2; }
 .terminology-summary-icon { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; color: #426fc1; background: #eaf2ff; }
 .terminology-summary-icon svg { width: 16px; height: 16px; }
-.terminology-panel summary strong, .terminology-panel summary small { display: block; }
-.terminology-panel summary strong { color: #33445e; font-size: 11px; }
-.terminology-panel summary small { margin-top: 3px; color: #8995a6; font-size: 9px; font-weight: 400; }
-.terminology-panel summary b { padding: 4px 8px; border-radius: 999px; color: #416bb3; background: #eaf1fc; font-size: 9px; }
-.terminology-body { padding: 0 23px 20px; }
-.terminology-form { display: grid; grid-template-columns: 1fr 24px 1fr auto; gap: 10px; align-items: end; padding-top: 4px; }
+.terminology-heading strong, .terminology-heading small { display: block; }
+.terminology-heading strong { color: #33445e; font-size: 11px; line-height: 1.35; }
+.terminology-heading small { margin-top: 3px; color: #8995a6; font-size: 8px; font-weight: 400; }
+.terminology-heading b { padding: 4px 7px; border-radius: 999px; color: #416bb3; background: #eaf1fc; font-size: 8px; white-space: nowrap; }
+.terminology-body { padding: 13px 14px 14px; }
+.terminology-form { display: grid; grid-template-columns: 1fr; gap: 8px; align-items: end; }
 .terminology-form label { display: grid; gap: 6px; color: #5b6880; font-size: 9px; font-weight: 600; }
 .terminology-form input { width: 100%; height: 38px; padding: 0 10px; border: 1px solid #dce3ed; border-radius: 8px; outline: none; color: #2d3c54; background: #fff; font-size: 11px; }
 .terminology-form input:focus { border-color: #6790de; box-shadow: 0 0 0 3px #3e73d516; }
-.terminology-arrow { height: 38px; display: grid; place-items: center; color: #8da0bc; font-size: 15px; }
-.terminology-save { min-width: 110px; }
+.terminology-arrow { height: 10px; display: grid; place-items: center; color: #8da0bc; font-size: 13px; transform: rotate(90deg); }
+.terminology-save { width: 100%; min-width: 0; }
 .terminology-help { margin: 9px 0 12px; color: #8f9aab; font-size: 9px; }
-.terminology-table { overflow-x: auto; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; }
-.terminology-table table { width: 100%; border-collapse: collapse; font-size: 10px; }
-.terminology-table th { padding: 8px 10px; color: #60718b; background: #f2f6fb; text-align: left; font-size: 9px; }
-.terminology-table td { padding: 9px 10px; color: #495970; border-top: 1px solid #edf0f4; }
-.terminology-table td:nth-child(1), .terminology-table td:nth-child(2) { width: 36%; }
-.terminology-table td:last-child, .terminology-table th:last-child { width: 60px; text-align: right; }
-.terminology-empty { padding: 20px !important; color: #929dad !important; text-align: center !important; }
+.terminology-list { max-height: 230px; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; overflow-y: auto; }
+.terminology-entry { padding: 10px; border-top: 1px solid #edf0f4; }
+.terminology-entry:first-child { border-top: 0; }
+.terminology-pair { display: grid; grid-template-columns: minmax(0, 1fr) 14px minmax(0, 1fr); gap: 5px; align-items: center; color: #59677c; font-size: 9px; }
+.terminology-pair span, .terminology-pair strong { min-width: 0; overflow-wrap: anywhere; }
+.terminology-pair strong { color: #2f4059; }
+.terminology-inline-arrow { color: #91a0b5; text-align: center; }
+.terminology-entry-actions { margin-top: 8px; display: flex; align-items: center; gap: 8px; }
+.terminology-entry-actions button { padding: 2px 0; border: 0; color: #426bb0; background: transparent; font-size: 8px; }
+.terminology-entry-actions button:hover:not(:disabled) { text-decoration: underline; }
+.terminology-entry-actions button:disabled { color: #adb5c1; }
+.terminology-empty { margin: 0; padding: 20px 13px; color: #929dad; text-align: center; font-size: 9px; line-height: 1.55; }
 .memory-scope { display: inline-block; padding: 3px 6px; border-radius: 999px; color: #446cae; background: #eaf1fc; font-size: 8px; white-space: nowrap; }
 .memory-scope.global { color: #6d638d; background: #f0ecf7; }
-.terminology-delete { padding: 3px 0; border: 0; color: #b14a4a; background: transparent; font-size: 9px; }
+.terminology-entry-actions .terminology-delete { color: #b14a4a; }
 .terminology-delete:hover:not(:disabled) { text-decoration: underline; }
 .terminology-delete:disabled, .terminology-readonly { color: #a2abb8; font-size: 9px; }
 .spinner { width: 15px; height: 15px; border: 2px solid #ffffff55; border-top-color: #fff; border-radius: 50%; animation: spin .75s linear infinite; }
@@ -148,6 +152,7 @@ svg { width: 20px; height: 20px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .content-grid { max-width: 1440px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 20px; align-items: start; }
+.right-rail { position: sticky; top: 20px; max-height: calc(100vh - 40px); display: grid; gap: 12px; overflow-y: auto; scrollbar-width: thin; }
 .empty-report { min-height: 480px; padding: 60px 30px; border: 1px dashed #d4dde9; border-radius: 15px; background: #f8fafc; text-align: center; display: flex; align-items: center; flex-direction: column; justify-content: center; }
 .empty-illustration { position: relative; width: 76px; height: 76px; border-radius: 20px; background: #edf3fc; color: #5f84ca; display: grid; place-items: center; margin-bottom: 20px; }
 .empty-illustration > svg { width: 36px; height: 36px; }
@@ -227,7 +232,7 @@ svg { width: 20px; height: 20px; }
 .callout-preview strong { display: block; color: #3b4a60; font-size: 11px; }
 .callout-preview p { margin: 5px 0 0; color: #66758a; font-size: 10px; line-height: 1.6; }
 
-.quality-panel { position: sticky; top: 20px; border: 1px solid #dfe6ef; border-radius: 15px; background: #fff; box-shadow: 0 7px 24px #253b580c; overflow: hidden; }
+.quality-panel { border: 1px solid #dfe6ef; border-radius: 15px; background: #fff; box-shadow: 0 7px 24px #253b580c; overflow: hidden; }
 .quality-heading { min-height: 76px; padding: 17px 18px; border-bottom: 1px solid #e7ecf2; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .issue-count { flex: 0 0 auto; padding: 5px 7px; border-radius: 999px; color: #16765d; background: #e9f8f3; font-size: 9px; font-weight: 600; }
 .issue-count.blocked { color: #ae3e3e; background: #fff0f0; }
@@ -283,7 +288,7 @@ svg { width: 20px; height: 20px; }
 @media (max-width: 1100px) {
   .project-creator { grid-template-columns: 1fr; }
   .content-grid { grid-template-columns: 1fr; }
-  .quality-panel { position: static; grid-row: 1; }
+  .right-rail { position: static; max-height: none; grid-row: 1; overflow: visible; }
   .issue-list { max-height: 250px; }
 }
 
@@ -301,8 +306,6 @@ svg { width: 20px; height: 20px; }
   .project-creator-actions { grid-column: 1 / -1; }
   .transcript-field { border-right: 0; border-bottom: 1px solid #e8edf3; }
   .transcript-field textarea { min-height: 190px; }
-  .terminology-form { grid-template-columns: 1fr 24px 1fr; }
-  .terminology-save { grid-column: 1 / -1; }
   .loading-shell { grid-template-columns: 1fr; }
   .loading-shell aside { display: none; }
   .body-skeleton { width: 100%; }
@@ -324,9 +327,6 @@ svg { width: 20px; height: 20px; }
   .section-number { padding: 0; }
   .progress-card-heading { align-items: stretch; flex-direction: column; }
   .status-select { width: 100% !important; }
-  .terminology-form { grid-template-columns: 1fr; }
-  .terminology-arrow { height: auto; transform: rotate(90deg); }
-  .terminology-save { grid-column: auto; }
   .report-sheet { padding: 18px 16px 28px; }
   .editor-titlebar { align-items: flex-start; }
   .autosave { display: none; }

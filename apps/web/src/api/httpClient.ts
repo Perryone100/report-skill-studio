@@ -143,8 +143,8 @@ function mapSkill(skill: ApiSkill): SkillOption {
 function mapProvider(provider: ApiProvider): ModelOption {
   return {
     id: provider.id,
-    name: provider.name,
-    provider: provider.model,
+    name: provider.local ? provider.name : provider.model,
+    provider: provider.local ? provider.model : provider.name,
     locality: provider.local ? 'local' : 'cloud',
     ready: provider.configured,
   }

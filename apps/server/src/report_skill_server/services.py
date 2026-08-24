@@ -276,10 +276,18 @@ class ReportGenerationService:
         if project.description.strip():
             project_memory += f"\n{project.description.strip()}"
 
+        normalized_transcript = transcript.casefold()
         confirmed_terms = [
             f"{', '.join(term.variants)} → {term.canonical}"
             for term in terminology.terms
             if term.confirmed
+            and (
+                term.canonical.casefold() in normalized_transcript
+                or any(
+                    variant.casefold() in normalized_transcript
+                    for variant in term.variants
+                )
+            )
         ]
         replacements = {
             "{{report_date}}": date.today().isoformat(),
