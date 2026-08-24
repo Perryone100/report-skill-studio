@@ -9,7 +9,7 @@ from skill_engine import SkillLoadError, load_skill
 
 def test_loads_bundled_default_skill(default_skill) -> None:
     assert default_skill.manifest.id == "default-weekly-meeting"
-    assert default_skill.manifest.version == "0.2.0"
+    assert default_skill.manifest.version == "0.2.1"
     assert default_skill.instructions.startswith("# 通用周会纪要写作规则")
     assert "{{transcript}}" in default_skill.prompt
     assert default_skill.report_schema["$schema"].endswith("2020-12/schema")

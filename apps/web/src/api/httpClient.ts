@@ -10,7 +10,9 @@ import type {
   ReportDraft,
   ReportOperationResult,
   ReportSummary,
+  SaveTerminologyMemoryInput,
   SkillOption,
+  TerminologyMemoryEntry,
   ValidationIssue,
   WorkspaceBootstrap,
 } from './types'
@@ -58,6 +60,17 @@ interface ApiJob {
   error: string | null
 }
 
+interface ApiTerminologyMemory {
+  id: string
+  project_id: string | null
+  source_value: string
+  normalized_value: string
+  scope: 'global' | 'project' | 'temporary'
+  confirmed: boolean
+  created_at: string
+  updated_at: string
+}
+
 interface ApiValidationIssue {
   code: string
   severity: IssueSeverity
@@ -77,7 +90,7 @@ const issueTitles: Record<string, string> = {
   'schema.invalid': '内容结构不符合 Skill',
   'section.missing': '缺少必填章节',
   'section.empty': '必填章节为空',
-  'phrase.forbidden': '发现禁用表达',
+  'phrase.forbidden': '页面标签建议',
   'terminology.noncanonical': '术语不一致',
 }
 
@@ -134,6 +147,17 @@ function mapProvider(provider: ApiProvider): ModelOption {
     provider: provider.model,
     locality: provider.local ? 'local' : 'cloud',
     ready: provider.configured,
+  }
+}
+
+function mapTerminologyMemory(memory: ApiTerminologyMemory): TerminologyMemoryEntry {
+  return {
+    id: memory.id,
+    projectId: memory.project_id ?? undefined,
+    sourceValue: memory.source_value,
+    normalizedValue: memory.normalized_value,
+    scope: memory.scope,
+    updatedAt: memory.updated_at,
   }
 }
 
@@ -197,6 +221,17 @@ export function createHttpApiClient(
   const requestValidation = async (reportId: string, signal?: AbortSignal) =>
     requestJson<ApiValidationResult>(`/reports/${reportId}/validation`, {}, signal)
 
+  const requestVoid = async (path: string, init: RequestInit, signal?: AbortSignal) => {
+    let response: Response
+    try {
+      response = await fetchImpl(`${apiBaseUrl}${path}`, { ...init, signal })
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') throw error
+      throw new ApiError('无法连接本地服务，请确认 FastAPI 已启动。', 'NETWORK_ERROR')
+    }
+    if (!response.ok) throw new ApiError(await errorMessage(response), `HTTP_${response.status}`)
+  }
+
   return {
     async getWorkspace(signal): Promise<WorkspaceBootstrap> {
       const [projects, reports, skills, providers] = await Promise.all([
@@ -219,6 +254,33 @@ export function createHttpApiClient(
         body: JSON.stringify({ name: input.name, description: input.description }),
       }, signal)
       return mapProject(project)
+    },
+
+    async listTerminologyMemory(projectId, signal) {
+      const memories = await requestJson<ApiTerminologyMemory[]>(
+        `/memory/terms?project_id=${encodeURIComponent(projectId)}`,
+        {},
+        signal,
+      )
+      return memories.map(mapTerminologyMemory)
+    },
+
+    async saveTerminologyMemory(input: SaveTerminologyMemoryInput, signal) {
+      const memory = await requestJson<ApiTerminologyMemory>('/memory/terms', {
+        method: 'POST',
+        body: JSON.stringify({
+          project_id: input.projectId,
+          source_value: input.sourceValue,
+          normalized_value: input.normalizedValue,
+          scope: 'project',
+          confirmed: true,
+        }),
+      }, signal)
+      return mapTerminologyMemory(memory)
+    },
+
+    async deleteTerminologyMemory(memoryId, signal) {
+      await requestVoid(`/memory/terms/${encodeURIComponent(memoryId)}`, { method: 'DELETE' }, signal)
     },
 
     async generateReport(input: GenerateReportInput, signal): Promise<ReportOperationResult> {

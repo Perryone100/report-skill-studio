@@ -41,11 +41,15 @@ describe('validateReport', () => {
     expect(validateReport(draft).every((issue) => issue.severity !== 'error')).toBe(true)
   })
 
-  it('拦截禁用表达', () => {
+  it('允许业务正文描述 AI 生成能力，并仅提醒内部标签', () => {
     const draft = validDraft()
-    draft.executive_summary = '这是 AI生成 的图文结合版。'
+    draft.executive_summary = '本周完成 AI 生成报告能力联调。'
+    draft.sections[0].blocks = [{ type: 'paragraph', text: '输出形式：图文结合版' }]
     const issues = validateReport(draft)
-    expect(issues.filter((issue) => issue.severity === 'error')).toHaveLength(2)
+    expect(issues.some((issue) => issue.message.includes('AI 生成'))).toBe(false)
+    expect(issues.filter((issue) => issue.severity === 'error')).toHaveLength(0)
+    expect(issues.filter((issue) => issue.severity === 'warning')).toHaveLength(2)
+    expect(issues.every((issue) => issue.field?.startsWith('$.') ?? true)).toBe(true)
   })
 
   it('段落为空时阻止确认', () => {

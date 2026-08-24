@@ -55,6 +55,18 @@ def test_forbids_internal_graphic_edition_label(default_skill, valid_report) -> 
     assert len(issues) == 1
     assert issues[0].value == "图文结合版"
     assert issues[0].path == "$.title"
+    assert issues[0].severity == "warning"
+    assert result.valid
+
+
+def test_allows_ai_generation_as_business_content(default_skill, valid_report) -> None:
+    report = deepcopy(valid_report)
+    report["executive_summary"] = "本周完成 AI 生成报告能力联调。"
+
+    result = default_skill.validate(report)
+
+    assert result.valid
+    assert all(issue.code != "phrase.forbidden" for issue in result.issues)
 
 
 def test_missing_required_section_returns_structured_issue(default_skill, valid_report) -> None:

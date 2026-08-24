@@ -249,6 +249,8 @@ class ReportGenerationService:
 
         bundled_terms: list[TermEntry] = []
         for term in skill.terminology.terms:
+            if term.canonical.casefold() in claimed_variants:
+                continue
             remaining_variants = [
                 variant
                 for variant in term.variants

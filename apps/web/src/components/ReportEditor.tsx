@@ -46,12 +46,13 @@ export function ReportEditor({ draft, confirmed, onChange }: ReportEditorProps) 
         <div className="title-fields two-column-fields">
           <label>
             报告标题
-            <input value={draft.title} onChange={(event) => update('title', event.target.value)} />
+            <input data-report-path="$.title" value={draft.title} onChange={(event) => update('title', event.target.value)} />
           </label>
           <label>
             会议日期
             <input
               type="date"
+              data-report-path="$.meeting_date"
               value={draft.meeting_date}
               onChange={(event) => update('meeting_date', event.target.value)}
             />
@@ -63,6 +64,7 @@ export function ReportEditor({ draft, confirmed, onChange }: ReportEditorProps) 
           <div className="section-content">
             <h3>执行摘要</h3>
             <textarea
+              data-report-path="$.executive_summary"
               rows={4}
               value={draft.executive_summary}
               onChange={(event) => update('executive_summary', event.target.value)}
@@ -72,8 +74,13 @@ export function ReportEditor({ draft, confirmed, onChange }: ReportEditorProps) 
 
         <div className="summary-card-grid">
           {draft.summary_cards.map((card, cardIndex) => (
-            <div className={`summary-edit-card ${card.tone ?? 'neutral'}`} key={`${card.label}-${cardIndex}`}>
+            <div
+              className={`summary-edit-card ${card.tone ?? 'neutral'}`}
+              data-report-path={`$.summary_cards[${cardIndex}]`}
+              key={`${card.label}-${cardIndex}`}
+            >
               <input
+                data-report-path={`$.summary_cards[${cardIndex}].label`}
                 aria-label={`概览卡片 ${cardIndex + 1} 标签`}
                 value={card.label}
                 onChange={(event) => {
@@ -83,6 +90,7 @@ export function ReportEditor({ draft, confirmed, onChange }: ReportEditorProps) 
                 }}
               />
               <textarea
+                data-report-path={`$.summary_cards[${cardIndex}].value`}
                 aria-label={`概览卡片 ${cardIndex + 1} 内容`}
                 rows={2}
                 value={card.value}
@@ -97,11 +105,12 @@ export function ReportEditor({ draft, confirmed, onChange }: ReportEditorProps) 
         </div>
 
         {draft.sections.map((section, sectionIndex) => (
-          <div className="sheet-section" key={section.id}>
+          <div className="sheet-section" data-report-path={`$.sections[${sectionIndex}]`} key={section.id}>
             <div className="section-number">{String(sectionIndex + 1).padStart(2, '0')}</div>
             <div className="section-content">
               <input
                 className="section-title-input"
+                data-report-path={`$.sections[${sectionIndex}].title`}
                 aria-label={`章节 ${sectionIndex + 1} 标题`}
                 value={section.title}
                 onChange={(event) => {
@@ -113,13 +122,18 @@ export function ReportEditor({ draft, confirmed, onChange }: ReportEditorProps) 
 
               <div className="block-stack">
                 {section.blocks.map((block, blockIndex) => (
-                  <div className={`report-block block-${block.type}`} key={`${section.id}-${blockIndex}`}>
+                  <div
+                    className={`report-block block-${block.type}`}
+                    data-report-path={`$.sections[${sectionIndex}].blocks[${blockIndex}]`}
+                    key={`${section.id}-${blockIndex}`}
+                  >
                     <div className="block-heading">
                       <span>{blockLabel[block.type]}</span>
                     </div>
                     <BlockContent
                       block={block}
                       label={section.title}
+                      path={`$.sections[${sectionIndex}].blocks[${blockIndex}]`}
                       onChange={(nextBlock) => updateBlock(sectionIndex, blockIndex, nextBlock)}
                     />
                   </div>
@@ -136,16 +150,19 @@ export function ReportEditor({ draft, confirmed, onChange }: ReportEditorProps) 
 function BlockContent({
   block,
   label,
+  path,
   onChange,
 }: {
   block: ReportBlock
   label: string
+  path: string
   onChange: (block: ReportBlock) => void
 }) {
   switch (block.type) {
     case 'paragraph':
       return (
         <textarea
+          data-report-path={`${path}.text`}
           rows={4}
           value={block.text}
           aria-label={`${label}段落内容`}
@@ -159,6 +176,7 @@ function BlockContent({
             <label key={`${label}-bullet-${index}`}>
               <span>{index + 1}</span>
               <textarea
+                data-report-path={`${path}.items[${index}]`}
                 rows={2}
                 value={item}
                 aria-label={`${label}列表项 ${index + 1}`}
@@ -179,6 +197,7 @@ function BlockContent({
             <thead><tr>{block.columns.map((column, index) => (
               <th key={`${column}-${index}`}>
                 <input
+                  data-report-path={`${path}.columns[${index}]`}
                   aria-label={`${label}表头 ${index + 1}`}
                   value={column}
                   onChange={(event) => {
@@ -194,6 +213,7 @@ function BlockContent({
                 <tr key={`row-${rowIndex}`}>{row.map((cell, cellIndex) => (
                   <td key={`cell-${cellIndex}`}>
                     <textarea
+                      data-report-path={`${path}.rows[${rowIndex}][${cellIndex}]`}
                       rows={2}
                       aria-label={`${label}第 ${rowIndex + 1} 行第 ${cellIndex + 1} 列`}
                       value={cell}
@@ -214,8 +234,9 @@ function BlockContent({
       return (
         <div className="status-card-preview">
           {block.cards.map((card, index) => (
-            <article key={`${card.title}-${index}`}>
+            <article data-report-path={`${path}.cards[${index}]`} key={`${card.title}-${index}`}>
               <input
+                data-report-path={`${path}.cards[${index}].title`}
                 aria-label={`${label}状态卡片 ${index + 1} 标题`}
                 value={card.title}
                 onChange={(event) => {
@@ -225,6 +246,7 @@ function BlockContent({
                 }}
               />
               <input
+                data-report-path={`${path}.cards[${index}].status`}
                 aria-label={`${label}状态卡片 ${index + 1} 状态`}
                 value={card.status}
                 onChange={(event) => {
@@ -234,6 +256,7 @@ function BlockContent({
                 }}
               />
               <textarea
+                data-report-path={`${path}.cards[${index}].details`}
                 rows={3}
                 aria-label={`${label}状态卡片 ${index + 1} 详情`}
                 value={(card.details ?? []).join('\n')}
@@ -254,12 +277,14 @@ function BlockContent({
       return (
         <aside className={`callout-preview tone-${block.tone ?? 'neutral'}`}>
           <input
+            data-report-path={`${path}.title`}
             aria-label={`${label}重点提示标题`}
             value={block.title ?? ''}
             placeholder="提示标题（可选）"
             onChange={(event) => onChange({ ...block, title: event.target.value || undefined })}
           />
           <textarea
+            data-report-path={`${path}.text`}
             rows={4}
             aria-label={`${label}重点提示内容`}
             value={block.text}

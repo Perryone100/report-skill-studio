@@ -7,12 +7,14 @@ import {
   type ReportDraft,
   type ReportSummary,
   type SkillOption,
+  type TerminologyMemoryEntry,
   type ValidationIssue,
   type WorkspaceBootstrap,
 } from './api'
 import { Icon } from './components/Icons'
 import { ReportEditor } from './components/ReportEditor'
 import { Sidebar } from './components/Sidebar'
+import { TerminologyMemoryPanel } from './components/TerminologyMemoryPanel'
 import { deriveWorkflowState, validateReport } from './domain/workbench'
 
 type LoadState = 'loading' | 'ready' | 'error'
@@ -24,6 +26,43 @@ const exampleTranscript = `主持人：先同步本周的几个重点。功能�
 运营负责人：活动页面 C 的配置和数据回传已经进入 UAT。上线窗口比较紧，希望本周提前锁定验收人。
 
 平台负责人：OCR 和 ASR 的稳定性优化已完成，接下来补成本统计和异常告警。`
+
+function describeIssueField(field: string, draft: ReportDraft): string {
+  if (field === '$.title') return '报告标题'
+  if (field === '$.meeting_date') return '会议日期'
+  if (field === '$.executive_summary') return '执行摘要'
+  const summaryMatch = field.match(/^\$\.summary_cards\[(\d+)]/)
+  if (summaryMatch) return `概览卡片 ${Number(summaryMatch[1]) + 1}`
+  const sectionMatch = field.match(/^\$\.sections\[(\d+)](?:\.blocks\[(\d+)])?/)
+  if (sectionMatch) {
+    const sectionIndex = Number(sectionMatch[1])
+    const sectionName = draft.sections[sectionIndex]?.title || `章节 ${sectionIndex + 1}`
+    return sectionMatch[2] === undefined
+      ? sectionName
+      : `${sectionName} · 内容块 ${Number(sectionMatch[2]) + 1}`
+  }
+  return '报告内容'
+}
+
+function locateReportField(field: string) {
+  const candidates = Array.from(document.querySelectorAll<HTMLElement>('[data-report-path]'))
+  const exact = candidates.find((element) => element.dataset.reportPath === field)
+  const parent = candidates
+    .filter((element) => field.startsWith(element.dataset.reportPath ?? ''))
+    .sort((left, right) => (right.dataset.reportPath?.length ?? 0) - (left.dataset.reportPath?.length ?? 0))[0]
+  const child = candidates
+    .filter((element) => (element.dataset.reportPath ?? '').startsWith(field))
+    .sort((left, right) => (left.dataset.reportPath?.length ?? 0) - (right.dataset.reportPath?.length ?? 0))[0]
+  const target = exact ?? parent ?? child
+  if (!target) return
+  target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  const focusTarget = target.matches('input, textarea, select, button')
+    ? target
+    : target.querySelector<HTMLElement>('input, textarea, select, button')
+  focusTarget?.focus({ preventScroll: true })
+  target.classList.add('report-field-highlight')
+  window.setTimeout(() => target.classList.remove('report-field-highlight'), 1800)
+}
 
 function App() {
   const [loadState, setLoadState] = useState<LoadState>('loading')
@@ -45,6 +84,8 @@ function App() {
   const [projectName, setProjectName] = useState('')
   const [projectDescription, setProjectDescription] = useState('')
   const [isCreatingProject, setIsCreatingProject] = useState(false)
+  const [terminologyMemory, setTerminologyMemory] = useState<TerminologyMemoryEntry[]>([])
+  const [isLoadingTerminology, setIsLoadingTerminology] = useState(false)
 
   const loadWorkspace = async () => {
     setLoadState('loading')
@@ -66,6 +107,25 @@ function App() {
   useEffect(() => {
     void loadWorkspace()
   }, [])
+
+  useEffect(() => {
+    if (!projectId) {
+      setTerminologyMemory([])
+      return
+    }
+    const controller = new AbortController()
+    setIsLoadingTerminology(true)
+    void apiClient.listTerminologyMemory(projectId, controller.signal)
+      .then(setTerminologyMemory)
+      .catch((error) => {
+        if (error instanceof DOMException && error.name === 'AbortError') return
+        setActionError(error instanceof Error ? error.message : '项目专词读取失败。')
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setIsLoadingTerminology(false)
+      })
+    return () => controller.abort()
+  }, [projectId])
 
   const localIssues = useMemo(
     () => (draft ? validateReport(draft).map((issue) => ({ ...issue, source: 'local' as const })) : []),
@@ -92,6 +152,7 @@ function App() {
   const selectedProject = workspace?.projects.find((project) => project.id === projectId)
   const selectedSkill = workspace?.skills.find((skill) => skill.id === skillId)
   const selectedModel = workspace?.models.find((model) => model.id === modelId)
+  const warningCount = issues.filter((issue) => issue.severity === 'warning').length
 
   const updateDraft = (nextDraft: ReportDraft) => {
     setDraft(nextDraft)
@@ -193,6 +254,31 @@ function App() {
       setActionError(error instanceof Error ? error.message : '项目创建失败。')
     } finally {
       setIsCreatingProject(false)
+    }
+  }
+
+  const handleSaveTerminology = async (sourceValue: string, normalizedValue: string) => {
+    if (!projectId) return
+    setActionError('')
+    try {
+      const saved = await apiClient.saveTerminologyMemory({ projectId, sourceValue, normalizedValue })
+      setTerminologyMemory((current) => [saved, ...current.filter((item) => item.id !== saved.id)])
+      setNotice(`已记住“${sourceValue} → ${normalizedValue}”，下次生成自动应用。`)
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : '矫正规则保存失败。')
+      throw error
+    }
+  }
+
+  const handleDeleteTerminology = async (entry: TerminologyMemoryEntry) => {
+    setActionError('')
+    try {
+      await apiClient.deleteTerminologyMemory(entry.id)
+      setTerminologyMemory((current) => current.filter((item) => item.id !== entry.id))
+      setNotice(`已删除“${entry.sourceValue} → ${entry.normalizedValue}”。`)
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : '矫正规则删除失败。')
+      throw error
     }
   }
 
@@ -360,6 +446,16 @@ function App() {
               )}
             </div>
           </div>
+
+          {projectId && (
+            <TerminologyMemoryPanel
+              projectName={selectedProject?.name ?? ''}
+              entries={terminologyMemory}
+              loading={isLoadingTerminology}
+              onSave={handleSaveTerminology}
+              onDelete={handleDeleteTerminology}
+            />
+          )}
         </section>
 
         <div className="content-grid">
@@ -388,8 +484,12 @@ function App() {
                 <h2>自动检查</h2>
               </div>
               {draft && (
-                <span className={`issue-count ${workflow.hasBlockingIssue ? 'blocked' : ''}`}>
-                  {workflow.hasBlockingIssue ? `${issues.filter((issue) => issue.severity === 'error').length} 项待处理` : '已通过'}
+                <span className={`issue-count ${workflow.hasBlockingIssue ? 'blocked' : warningCount > 0 ? 'suggestions' : ''}`}>
+                  {workflow.hasBlockingIssue
+                    ? `${issues.filter((issue) => issue.severity === 'error').length} 项须处理`
+                    : warningCount > 0
+                      ? `${warningCount} 项建议`
+                      : '已通过'}
                 </span>
               )}
             </div>
@@ -403,11 +503,20 @@ function App() {
               <div className="issue-list">
                 {issues.map((issue) => (
                   <div className={`issue-item ${issue.severity}`} key={issue.id}>
-                    <span className="issue-icon"><Icon name={issue.severity === 'error' ? 'warning' : 'check'} /></span>
+                    <span className="issue-icon"><Icon name={issue.severity === 'info' ? 'check' : 'warning'} /></span>
                     <div>
                       <strong>{issue.title}<small className={`issue-source ${issue.source ?? 'local'}`}>{issue.source === 'server' ? '服务端' : '本地'}</small></strong>
                       <p>{issue.message}</p>
                       {issue.suggestion && <p className="issue-suggestion">建议：{issue.suggestion}</p>}
+                      {issue.field && (
+                        <button
+                          type="button"
+                          className="issue-location"
+                          onClick={() => locateReportField(issue.field!)}
+                        >
+                          定位到：{describeIssueField(issue.field, draft)}
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -431,7 +540,7 @@ function App() {
               >
                 {isExporting ? <><span className="spinner" /> 正在导出</> : <><Icon name="download" /> 导出 PDF</>}
               </button>
-              {draft && !confirmed && <p>修改内容后需要重新确认，确认通过才能导出。</p>}
+              {draft && !confirmed && <p>只有错误会阻止确认；建议项不影响确认和导出。</p>}
             </div>
           </aside>
         </div>

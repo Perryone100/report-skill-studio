@@ -2,6 +2,7 @@ export type ReportStatus = 'draft' | 'confirmed' | 'exported'
 export type ProjectStatus = 'active' | 'archived'
 export type IssueSeverity = 'error' | 'warning' | 'info'
 export type ReportTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger'
+export type MemoryScope = 'global' | 'project' | 'temporary'
 
 export interface ProjectSummary {
   id: string
@@ -141,4 +142,19 @@ export interface ExportArtifact {
   blob: Blob
   fileName: string
   mock: boolean
+}
+
+export interface TerminologyMemoryEntry {
+  id: string
+  projectId?: string
+  sourceValue: string
+  normalizedValue: string
+  scope: MemoryScope
+  updatedAt: string
+}
+
+export interface SaveTerminologyMemoryInput {
+  projectId: string
+  sourceValue: string
+  normalizedValue: string
 }

@@ -105,15 +105,15 @@ def test_escapes_all_dynamic_content(report: dict) -> None:
     assert not re.search(r"<img\b", html, re.I)
 
 
-def test_removes_internal_labels_from_display(report: dict) -> None:
+def test_preserves_user_confirmed_business_text(report: dict) -> None:
     report["title"] += " 图文结合版"
-    report["executive_summary"] += " AI生成"
+    report["executive_summary"] += " AI 生成能力已完成联调"
     report["sections"][1]["blocks"][0]["items"].append("内容来源")
 
     html = render_html(report, TEMPLATE_DIR)
 
-    for label in ("图文结合版", "AI生成", "内容来源"):
-        assert label not in html
+    for text in ("图文结合版", "AI 生成能力已完成联调", "内容来源"):
+        assert text in html
 
 
 @pytest.mark.parametrize(

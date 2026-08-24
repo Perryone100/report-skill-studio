@@ -60,9 +60,10 @@ renderer must keep its JSON Schema compatible with this canonical contract.
 
 Validation runs after generation, after editing, and before confirmation.
 Schema-invalid output cannot enter the editor because the UI cannot interpret
-it safely. Structurally valid output with terminology, required-section, or
-forbidden-phrase issues is saved as a draft so the user can repair it. Only a
-valid draft can be confirmed; only a confirmed report can be exported to PDF.
+it safely. Structurally valid output with validation findings is saved as a
+draft so the user can review it. Error-severity findings block confirmation;
+warning and info findings remain visible but do not block confirmation or PDF
+export. Only a confirmed report can be exported to PDF.
 
 `required_sections` enforces section IDs, titles, and non-empty content. Set
 `allow_additional_sections: false` when a Skill uses a fixed report outline;
@@ -72,7 +73,10 @@ names stay inside content blocks instead of becoming headings.
 
 Bundled terminology and user-confirmed project memory are merged in one pass.
 Project memory wins over global memory, and user memory wins over bundled terms.
-Unconfirmed candidate corrections never affect generation or validation.
+Unconfirmed candidate corrections never affect generation or validation. The
+workbench exposes project memory as an editable source-to-canonical correction
+table; re-saving the same source updates the existing rule, and the confirmed
+mapping is applied before the next model call.
 
 ## Template safety
 

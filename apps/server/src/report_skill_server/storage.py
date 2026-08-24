@@ -295,25 +295,51 @@ class SQLiteStore:
             raise ValueError("project-scoped terminology requires project_id")
         if project_id is not None:
             self.get_project(project_id)
-        memory_id = new_id()
+        source = source_value.strip()
+        normalized = normalized_value.strip()
+        if not source or not normalized:
+            raise ValueError("terminology values must not be blank")
+        if source.casefold() == normalized.casefold():
+            raise ValueError("source and normalized terminology must be different")
         now = utc_now()
         with self.connect() as connection:
-            connection.execute(
+            existing = connection.execute(
                 """
-                INSERT INTO terminology_memory
-                    (id, project_id, source_value, normalized_value, scope, confirmed, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+                SELECT id FROM terminology_memory
+                WHERE project_id IS ? AND lower(source_value) = lower(?)
+                ORDER BY updated_at DESC
+                LIMIT 1
                 """,
-                (
-                    memory_id,
-                    project_id,
-                    source_value.strip(),
-                    normalized_value.strip(),
-                    scope.value,
-                    now.isoformat(),
-                    now.isoformat(),
-                ),
-            )
+                (project_id, source),
+            ).fetchone()
+            if existing is not None:
+                memory_id = existing["id"]
+                connection.execute(
+                    """
+                    UPDATE terminology_memory
+                    SET normalized_value = ?, scope = ?, confirmed = 1, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (normalized, scope.value, now.isoformat(), memory_id),
+                )
+            else:
+                memory_id = new_id()
+                connection.execute(
+                    """
+                    INSERT INTO terminology_memory
+                        (id, project_id, source_value, normalized_value, scope, confirmed, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+                    """,
+                    (
+                        memory_id,
+                        project_id,
+                        source,
+                        normalized,
+                        scope.value,
+                        now.isoformat(),
+                        now.isoformat(),
+                    ),
+                )
         return self.get_terminology_memory(memory_id)
 
     def get_terminology_memory(self, memory_id: str) -> TerminologyMemory:
@@ -335,6 +361,11 @@ class SQLiteStore:
         with self.connect() as connection:
             rows = connection.execute(query, params).fetchall()
         return [self._memory_from_row(row) for row in rows]
+
+    def delete_terminology_memory(self, memory_id: str) -> None:
+        self.get_terminology_memory(memory_id)
+        with self.connect() as connection:
+            connection.execute("DELETE FROM terminology_memory WHERE id = ?", (memory_id,))
 
     @staticmethod
     def _insert_version(

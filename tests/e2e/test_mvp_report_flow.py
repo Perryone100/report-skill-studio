@@ -22,7 +22,7 @@ def test_mvp_report_lifecycle_is_local_validated_and_immutable(
         for skill in skills_response.json()
         if skill["id"] == "default-weekly-meeting"
     )
-    assert default_skill["version"] == "0.2.0"
+    assert default_skill["version"] == "0.2.1"
     assert default_skill["locale"] == "zh-CN"
 
     providers_response = client.get("/api/providers")

@@ -24,14 +24,6 @@ _DOCUMENT_TITLE = "{{DOCUMENT_TITLE}}"
 _REPORT_CSS = "{{REPORT_CSS}}"
 _REPORT_CONTENT = "{{REPORT_CONTENT}}"
 
-_FORBIDDEN_LABELS = (
-    "图文结合版",
-    "内容来源",
-    "汇报口径",
-    "AI生成",
-    "输出形式",
-)
-
 _UNSAFE_HTML_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (
         re.compile(
@@ -383,10 +375,10 @@ def _html_text(value: str) -> str:
 
 
 def _clean_display_text(value: str) -> str:
-    cleaned = value
-    for label in _FORBIDDEN_LABELS:
-        cleaned = cleaned.replace(label, "")
-    return re.sub(r"[ \t]{2,}", " ", cleaned).strip(" \t·|/-")
+    # The renderer must preserve user-confirmed business content. Writing-policy
+    # suggestions belong to Skill validation; silently deleting phrases here can
+    # corrupt legitimate descriptions such as “AI 生成能力”.
+    return re.sub(r"[ \t]{2,}", " ", value).strip(" \t·|/-")
 
 
 def _tone(value: Any, *, status: str | None = None) -> str:

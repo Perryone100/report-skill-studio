@@ -13,6 +13,11 @@ The project is currently under active MVP development.
 5. Render the confirmed report to HTML and PDF.
 6. Promote user-confirmed terminology corrections into project memory.
 
+The workbench includes a project-level terminology and spoken-correction table.
+Confirmed mappings are applied to later transcripts before model generation.
+Validation distinguishes blocking structural errors from non-blocking writing
+suggestions, and each issue can be located back to its report field.
+
 ## Bundled Skill
 
 The bundled `default-weekly-meeting` Skill uses four fixed sections: overall

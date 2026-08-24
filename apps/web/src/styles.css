@@ -114,6 +114,35 @@ svg { width: 20px; height: 20px; }
 .generate-button:disabled, .primary-button:disabled { color: #95a1b3; background: #e6ebf1; box-shadow: none; }
 .generate-button svg, .primary-button svg, .secondary-button svg { width: 17px; height: 17px; }
 .button-help { margin: -7px 0 0; color: #9aa4b3; font-size: 9px; text-align: center; line-height: 1.45; }
+.terminology-panel { border-top: 1px solid #e8edf3; background: #fbfcfe; }
+.terminology-panel > summary { min-height: 66px; padding: 14px 23px; display: grid; grid-template-columns: 34px 1fr auto; gap: 11px; align-items: center; list-style: none; cursor: pointer; }
+.terminology-panel > summary::-webkit-details-marker { display: none; }
+.terminology-summary-icon { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; color: #426fc1; background: #eaf2ff; }
+.terminology-summary-icon svg { width: 16px; height: 16px; }
+.terminology-panel summary strong, .terminology-panel summary small { display: block; }
+.terminology-panel summary strong { color: #33445e; font-size: 11px; }
+.terminology-panel summary small { margin-top: 3px; color: #8995a6; font-size: 9px; font-weight: 400; }
+.terminology-panel summary b { padding: 4px 8px; border-radius: 999px; color: #416bb3; background: #eaf1fc; font-size: 9px; }
+.terminology-body { padding: 0 23px 20px; }
+.terminology-form { display: grid; grid-template-columns: 1fr 24px 1fr auto; gap: 10px; align-items: end; padding-top: 4px; }
+.terminology-form label { display: grid; gap: 6px; color: #5b6880; font-size: 9px; font-weight: 600; }
+.terminology-form input { width: 100%; height: 38px; padding: 0 10px; border: 1px solid #dce3ed; border-radius: 8px; outline: none; color: #2d3c54; background: #fff; font-size: 11px; }
+.terminology-form input:focus { border-color: #6790de; box-shadow: 0 0 0 3px #3e73d516; }
+.terminology-arrow { height: 38px; display: grid; place-items: center; color: #8da0bc; font-size: 15px; }
+.terminology-save { min-width: 110px; }
+.terminology-help { margin: 9px 0 12px; color: #8f9aab; font-size: 9px; }
+.terminology-table { overflow-x: auto; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; }
+.terminology-table table { width: 100%; border-collapse: collapse; font-size: 10px; }
+.terminology-table th { padding: 8px 10px; color: #60718b; background: #f2f6fb; text-align: left; font-size: 9px; }
+.terminology-table td { padding: 9px 10px; color: #495970; border-top: 1px solid #edf0f4; }
+.terminology-table td:nth-child(1), .terminology-table td:nth-child(2) { width: 36%; }
+.terminology-table td:last-child, .terminology-table th:last-child { width: 60px; text-align: right; }
+.terminology-empty { padding: 20px !important; color: #929dad !important; text-align: center !important; }
+.memory-scope { display: inline-block; padding: 3px 6px; border-radius: 999px; color: #446cae; background: #eaf1fc; font-size: 8px; white-space: nowrap; }
+.memory-scope.global { color: #6d638d; background: #f0ecf7; }
+.terminology-delete { padding: 3px 0; border: 0; color: #b14a4a; background: transparent; font-size: 9px; }
+.terminology-delete:hover:not(:disabled) { text-decoration: underline; }
+.terminology-delete:disabled, .terminology-readonly { color: #a2abb8; font-size: 9px; }
 .spinner { width: 15px; height: 15px; border: 2px solid #ffffff55; border-top-color: #fff; border-radius: 50%; animation: spin .75s linear infinite; }
 .spinner.dark { border-color: #59708e40; border-top-color: #425b80; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -202,6 +231,7 @@ svg { width: 20px; height: 20px; }
 .quality-heading { min-height: 76px; padding: 17px 18px; border-bottom: 1px solid #e7ecf2; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .issue-count { flex: 0 0 auto; padding: 5px 7px; border-radius: 999px; color: #16765d; background: #e9f8f3; font-size: 9px; font-weight: 600; }
 .issue-count.blocked { color: #ae3e3e; background: #fff0f0; }
+.issue-count.suggestions { color: #986518; background: #fff5df; }
 .quality-empty { min-height: 210px; padding: 35px 25px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
 .quality-empty > svg { width: 34px; height: 34px; padding: 7px; border-radius: 50%; color: #84a0c9; background: #eff4fa; }
 .quality-empty p { color: #929dad; font-size: 10px; line-height: 1.6; }
@@ -220,6 +250,13 @@ svg { width: 20px; height: 20px; }
 .issue-source.server { color: #426ba9; background: #e6eefb; }
 .issue-item p { margin: 3px 0 0; color: #788497; font-size: 9px; line-height: 1.5; }
 .issue-item .issue-suggestion { color: #5d7190; font-weight: 600; }
+.issue-location { margin-top: 7px; padding: 0; border: 0; color: #3568ca; background: transparent; font-size: 9px; font-weight: 600; text-align: left; }
+.issue-location:hover { text-decoration: underline; }
+.report-field-highlight { animation: report-field-pulse 1.8s ease; }
+@keyframes report-field-pulse {
+  0%, 100% { box-shadow: none; }
+  18%, 70% { box-shadow: 0 0 0 4px #e3a33b4a; border-color: #d69a39; }
+}
 .quality-actions { padding: 14px; border-top: 1px solid #e7ecf2; display: grid; gap: 8px; }
 .secondary-button { color: #425879; background: #f3f6fa; border: 1px solid #d9e0e9; }
 .secondary-button:hover:not(:disabled) { background: #eaf0f6; }
@@ -264,6 +301,8 @@ svg { width: 20px; height: 20px; }
   .project-creator-actions { grid-column: 1 / -1; }
   .transcript-field { border-right: 0; border-bottom: 1px solid #e8edf3; }
   .transcript-field textarea { min-height: 190px; }
+  .terminology-form { grid-template-columns: 1fr 24px 1fr; }
+  .terminology-save { grid-column: 1 / -1; }
   .loading-shell { grid-template-columns: 1fr; }
   .loading-shell aside { display: none; }
   .body-skeleton { width: 100%; }
@@ -285,6 +324,9 @@ svg { width: 20px; height: 20px; }
   .section-number { padding: 0; }
   .progress-card-heading { align-items: stretch; flex-direction: column; }
   .status-select { width: 100% !important; }
+  .terminology-form { grid-template-columns: 1fr; }
+  .terminology-arrow { height: auto; transform: rotate(90deg); }
+  .terminology-save { grid-column: auto; }
   .report-sheet { padding: 18px 16px 28px; }
   .editor-titlebar { align-items: flex-start; }
   .autosave { display: none; }

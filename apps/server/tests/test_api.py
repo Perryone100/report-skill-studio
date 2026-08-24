@@ -113,6 +113,38 @@ def test_only_confirmed_corrections_enter_memory(client: TestClient) -> None:
     assert memories[0]["normalized_value"] == "任务看板"
 
 
+def test_project_correction_memory_can_be_updated_and_deleted(client: TestClient) -> None:
+    project = client.post("/api/projects", json={"name": "项目"}).json()
+    payload = {
+        "project_id": project["id"],
+        "source_value": "模块爱",
+        "normalized_value": "模块 A",
+        "scope": "project",
+        "confirmed": True,
+    }
+    created = client.post("/api/memory/terms", json=payload)
+    assert created.status_code == 201
+
+    updated = client.post(
+        "/api/memory/terms",
+        json={**payload, "normalized_value": "功能模块 A"},
+    )
+    assert updated.status_code == 201
+    assert updated.json()["id"] == created.json()["id"]
+    assert updated.json()["normalized_value"] == "功能模块 A"
+
+    memories = client.get(
+        "/api/memory/terms", params={"project_id": project["id"]}
+    ).json()
+    assert [item for item in memories if item["source_value"] == "模块爱"] == [
+        updated.json()
+    ]
+
+    deleted = client.delete(f"/api/memory/terms/{created.json()['id']}")
+    assert deleted.status_code == 204
+    assert client.delete(f"/api/memory/terms/{created.json()['id']}").status_code == 404
+
+
 def test_generation_normalizes_confirmed_skill_terms(client: TestClient) -> None:
     project = client.post("/api/projects", json={"name": "项目"}).json()
     report = client.post(
@@ -186,6 +218,38 @@ def test_project_memory_overrides_bundled_term(client: TestClient) -> None:
     assert validation["issues"] == []
 
 
+def test_project_memory_can_override_a_bundled_canonical_term(client: TestClient) -> None:
+    project = client.post("/api/projects", json={"name": "项目"}).json()
+    memory = client.post(
+        "/api/memory/terms",
+        json={
+            "project_id": project["id"],
+            "source_value": "OCR",
+            "normalized_value": "视觉识别模块",
+            "scope": "project",
+            "confirmed": True,
+        },
+    )
+    assert memory.status_code == 201
+    report = client.post(
+        "/api/reports",
+        json={
+            "project_id": project["id"],
+            "title": "术语覆盖",
+            "transcript": "OCR 已完成联调。",
+            "skill_id": "default-weekly-meeting",
+        },
+    ).json()
+
+    job = client.post(
+        f"/api/reports/{report['id']}/generate", json={"provider_id": "mock"}
+    ).json()
+
+    assert job["status"] == "succeeded"
+    generated = client.get(f"/api/reports/{report['id']}").json()
+    assert "视觉识别模块" in generated["content"]["executive_summary"]
+
+
 def test_rule_issues_are_saved_for_human_review(client: TestClient) -> None:
     class ForbiddenPhraseProvider(MockChatProvider):
         id = "reviewable"
@@ -215,9 +279,10 @@ def test_rule_issues_are_saved_for_human_review(client: TestClient) -> None:
     )
     assert job.status_code == 200
     assert job.json()["status"] == "succeeded"
-    assert job.json()["result"]["validation"]["valid"] is False
+    assert job.json()["result"]["validation"]["valid"] is True
+    assert job.json()["result"]["validation"]["issues"][0]["severity"] == "warning"
 
     saved = client.get(f"/api/reports/{report['id']}").json()
     assert "图文结合版" in saved["content"]["executive_summary"]
     confirmation = client.post(f"/api/reports/{report['id']}/confirm")
-    assert confirmation.status_code == 422
+    assert confirmation.status_code == 200

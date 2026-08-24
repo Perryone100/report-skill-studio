@@ -41,7 +41,7 @@ describe('HTTP API client', () => {
       const path = new URL(String(input)).pathname
       if (path.endsWith('/projects')) return jsonResponse([{ id: 'project-1', name: '产品研发', description: '周会', created_at: '2026-08-21T10:00:00Z', updated_at: '2026-08-21T11:00:00Z' }])
       if (path.endsWith('/reports')) return jsonResponse([apiReport()])
-      if (path.endsWith('/skills')) return jsonResponse([{ id: 'default-weekly-meeting', name: '默认周会', version: '0.2.0', description: '通用周会报告', locale: 'zh-CN' }])
+      if (path.endsWith('/skills')) return jsonResponse([{ id: 'default-weekly-meeting', name: '默认周会', version: '0.2.1', description: '通用周会报告', locale: 'zh-CN' }])
       if (path.endsWith('/providers')) return jsonResponse([{ id: 'mock', name: '本地演示模型', model: 'deterministic-mock', local: true, configured: true }])
       return jsonResponse({ detail: 'not found' }, 404)
     })
@@ -110,6 +110,50 @@ describe('HTTP API client', () => {
     expect(body).toEqual({ name: '演示项目', description: '虚构周会' })
     expect(project).toMatchObject({ id: 'project-new', name: '演示项目', status: 'active' })
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('管理项目专词并使用确认后的矫正规则', async () => {
+    const paths: string[] = []
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input))
+      paths.push(`${init?.method ?? 'GET'} ${url.pathname}${url.search}`)
+      if (init?.method === 'DELETE') return new Response(null, { status: 204 })
+      const memory = {
+        id: 'term-1',
+        project_id: 'project-1',
+        source_value: '模块爱',
+        normalized_value: '功能模块 A',
+        scope: 'project',
+        confirmed: true,
+        created_at: '2026-08-24T10:00:00Z',
+        updated_at: '2026-08-24T11:00:00Z',
+      }
+      return jsonResponse(init?.method === 'POST' ? memory : [memory])
+    })
+    const client = createHttpApiClient('http://localhost:8000/api', fetchMock as typeof fetch)
+
+    const saved = await client.saveTerminologyMemory({
+      projectId: 'project-1',
+      sourceValue: '模块爱',
+      normalizedValue: '功能模块 A',
+    })
+    const listed = await client.listTerminologyMemory('project-1')
+    await client.deleteTerminologyMemory(saved.id)
+
+    expect(saved).toMatchObject({ sourceValue: '模块爱', normalizedValue: '功能模块 A', scope: 'project' })
+    expect(listed).toEqual([saved])
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
+      project_id: 'project-1',
+      source_value: '模块爱',
+      normalized_value: '功能模块 A',
+      scope: 'project',
+      confirmed: true,
+    })
+    expect(paths).toEqual([
+      'POST /api/memory/terms',
+      'GET /api/memory/terms?project_id=project-1',
+      'DELETE /api/memory/terms/term-1',
+    ])
   })
 
   it('保存时剥离 reportId，并在校验通过后确认', async () => {

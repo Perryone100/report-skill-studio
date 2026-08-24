@@ -11,23 +11,26 @@ required_sections:
 allow_additional_sections: false
 forbidden_phrases:
   - phrase: 图文结合版
+    severity: warning
     message: 页面不得暴露内部输出形式“图文结合版”。
-  - phrase: 内容来源
+  - phrase: 内容来源：
+    severity: warning
     message: 页面不得展示内部内容来源。
-  - phrase: 汇报口径
+  - phrase: 汇报口径：
+    severity: warning
     message: 页面不得展示内部汇报口径。
-  - phrase: 整理口径
+  - phrase: 整理口径：
+    severity: warning
     message: 页面不得展示内部整理口径。
-  - phrase: 输出形式
+  - phrase: 输出形式：
+    severity: warning
     message: 页面不得展示内部输出形式。
   - phrase: 老板汇报版
+    severity: warning
     message: 管理层写作风格不得作为页面标签展示。
   - phrase: 管理层汇报版
+    severity: warning
     message: 管理层写作风格不得作为页面标签展示。
-  - phrase: AI生成
-    message: 页面不得包含生成方式说明。
-  - phrase: AI 生成
-    message: 页面不得包含生成方式说明。
 terminology:
   enabled: true
   severity: error

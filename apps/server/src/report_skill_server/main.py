@@ -3,7 +3,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from functools import lru_cache
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from report_renderer import PdfRenderingUnavailableError, ReportRendererError
@@ -249,6 +249,17 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.delete("/api/memory/terms/{memory_id}", status_code=204)
+    def delete_terminology_memory(
+        memory_id: str,
+        store: SQLiteStore = Depends(get_store),
+    ) -> Response:
+        try:
+            store.delete_terminology_memory(memory_id)
+        except NotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return Response(status_code=204)
 
     return app
 

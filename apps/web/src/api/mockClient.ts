@@ -3,6 +3,7 @@ import type {
   ExportArtifact,
   GenerateReportInput,
   ReportDraft,
+  TerminologyMemoryEntry,
   WorkspaceBootstrap,
 } from './types'
 
@@ -61,9 +62,9 @@ const bootstrap: WorkspaceBootstrap = {
   ],
   skills: [
     {
-      id: 'default-weekly-meeting@0.2.0',
+      id: 'default-weekly-meeting@0.2.1',
       name: '通用周会纪要',
-      version: '0.2.0',
+      version: '0.2.1',
       description: '按固定工作维度整理进展、计划与风险。',
     },
   ],
@@ -84,6 +85,17 @@ const bootstrap: WorkspaceBootstrap = {
     },
   ],
 }
+
+const terminologyMemory: TerminologyMemoryEntry[] = [
+  {
+    id: 'term-demo-1',
+    projectId: 'demo-product',
+    sourceValue: '模块爱',
+    normalizedValue: '功能模块 A',
+    scope: 'project',
+    updatedAt: '2026-08-24T09:30:00+08:00',
+  },
+]
 
 function buildDraft(input: GenerateReportInput): ReportDraft {
   const transcriptPreview = input.transcript
@@ -175,6 +187,39 @@ export const mockApiClient: WorkbenchApi = {
     }
     bootstrap.projects.push(project)
     return structuredClone(project)
+  },
+
+  async listTerminologyMemory(projectId, signal) {
+    await wait(180, signal)
+    return structuredClone(terminologyMemory.filter((item) => !item.projectId || item.projectId === projectId))
+  },
+
+  async saveTerminologyMemory(input, signal) {
+    await wait(220, signal)
+    const existing = terminologyMemory.find((item) =>
+      item.projectId === input.projectId
+      && item.sourceValue.toLocaleLowerCase() === input.sourceValue.toLocaleLowerCase())
+    if (existing) {
+      existing.normalizedValue = input.normalizedValue
+      existing.updatedAt = new Date().toISOString()
+      return structuredClone(existing)
+    }
+    const memory: TerminologyMemoryEntry = {
+      id: createId(),
+      projectId: input.projectId,
+      sourceValue: input.sourceValue,
+      normalizedValue: input.normalizedValue,
+      scope: 'project',
+      updatedAt: new Date().toISOString(),
+    }
+    terminologyMemory.unshift(memory)
+    return structuredClone(memory)
+  },
+
+  async deleteTerminologyMemory(memoryId, signal) {
+    await wait(180, signal)
+    const index = terminologyMemory.findIndex((item) => item.id === memoryId)
+    if (index >= 0) terminologyMemory.splice(index, 1)
   },
 
   async generateReport(input, signal) {
