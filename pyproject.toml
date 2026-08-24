@@ -1,0 +1,20 @@
+[project]
+name = "report-skill-studio-workspace"
+version = "0.1.0"
+requires-python = ">=3.11"
+
+[tool.uv.workspace]
+members = [
+  "apps/server",
+  "packages/skill_engine",
+  "packages/report_renderer",
+]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = [
+  "apps/server/tests",
+  "packages/skill_engine/tests",
+  "packages/report_renderer/tests",
+  "tests/e2e",
+]

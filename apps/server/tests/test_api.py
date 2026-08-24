@@ -1,0 +1,223 @@
+from fastapi.testclient import TestClient
+
+from report_skill_server.main import get_provider_registry
+from report_skill_server.providers import MockChatProvider
+from report_skill_server.services import ProviderRegistry
+
+
+def test_health(client: TestClient) -> None:
+    response = client.get("/api/health")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+
+
+def test_report_lifecycle(client: TestClient) -> None:
+    project_response = client.post(
+        "/api/projects",
+        json={"name": "产品研发", "description": "虚构的周会纪要示例"},
+    )
+    assert project_response.status_code == 201
+    project_id = project_response.json()["id"]
+
+    report_response = client.post(
+        "/api/reports",
+        json={
+            "project_id": project_id,
+            "title": "产品研发周会纪要",
+            "transcript": "本周完成了逐字稿导入，下周继续联调。",
+            "skill_id": "default-weekly-meeting",
+        },
+    )
+    assert report_response.status_code == 201
+    report_id = report_response.json()["id"]
+
+    generation_response = client.post(
+        f"/api/reports/{report_id}/generate",
+        json={"provider_id": "mock"},
+    )
+    assert generation_response.status_code == 200
+    assert generation_response.json()["status"] == "succeeded"
+
+    fetched = client.get(f"/api/reports/{report_id}").json()
+    assert fetched["version"] == 2
+    assert fetched["content"]["title"] == "产品研发周会纪要"
+
+    validation = client.get(f"/api/reports/{report_id}/validation")
+    assert validation.status_code == 200
+    assert validation.json()["valid"] is True
+
+    preview = client.get(f"/api/reports/{report_id}/preview")
+    assert preview.status_code == 200
+    assert "产品研发周会纪要" in preview.text
+    assert "图文结合版" not in preview.text
+
+    confirmation = client.post(f"/api/reports/{report_id}/confirm")
+    assert confirmation.status_code == 200
+    assert confirmation.json()["status"] == "confirmed"
+
+    immutable = client.patch(
+        f"/api/reports/{report_id}",
+        json={"content": {"title": "should fail"}},
+    )
+    assert immutable.status_code == 409
+
+
+def test_missing_project_returns_404(client: TestClient) -> None:
+    response = client.post(
+        "/api/reports",
+        json={
+            "project_id": "missing",
+            "title": "报告",
+            "transcript": "有效逐字稿",
+        },
+    )
+    assert response.status_code == 404
+
+
+def test_lists_bundled_skills(client: TestClient) -> None:
+    response = client.get("/api/skills")
+    assert response.status_code == 200
+    assert response.json()[0]["id"] == "default-weekly-meeting"
+
+
+def test_only_confirmed_corrections_enter_memory(client: TestClient) -> None:
+    project = client.post("/api/projects", json={"name": "项目"}).json()
+    rejected = client.post(
+        "/api/memory/terms",
+        json={
+            "project_id": project["id"],
+            "source_value": "任务看版",
+            "normalized_value": "任务看板",
+            "scope": "project",
+            "confirmed": False,
+        },
+    )
+    assert rejected.status_code == 422
+
+    created = client.post(
+        "/api/memory/terms",
+        json={
+            "project_id": project["id"],
+            "source_value": "任务看版",
+            "normalized_value": "任务看板",
+            "scope": "project",
+            "confirmed": True,
+        },
+    )
+    assert created.status_code == 201
+    assert created.json()["confirmed"] is True
+
+    memories = client.get(
+        "/api/memory/terms", params={"project_id": project["id"]}
+    ).json()
+    assert memories[0]["normalized_value"] == "任务看板"
+
+
+def test_generation_normalizes_confirmed_skill_terms(client: TestClient) -> None:
+    project = client.post("/api/projects", json={"name": "项目"}).json()
+    report = client.post(
+        "/api/reports",
+        json={
+            "project_id": project["id"],
+            "title": "术语检查",
+            "transcript": "任务看版已完成更新，星云计划项目进入验收。",
+            "skill_id": "default-weekly-meeting",
+        },
+    ).json()
+
+    job = client.post(
+        f"/api/reports/{report['id']}/generate", json={"provider_id": "mock"}
+    ).json()
+
+    assert job["status"] == "succeeded"
+    assert {item["canonical"] for item in job["result"]["corrections"]} == {
+        "任务看板",
+        "星云项目",
+    }
+    generated = client.get(f"/api/reports/{report['id']}").json()
+    assert "任务看板" in generated["content"]["executive_summary"]
+    assert "星云项目" in generated["content"]["executive_summary"]
+
+
+def test_project_memory_overrides_bundled_term(client: TestClient) -> None:
+    project = client.post("/api/projects", json={"name": "项目"}).json()
+    memory = client.post(
+        "/api/memory/terms",
+        json={
+            "project_id": project["id"],
+            "source_value": "任务看版",
+            "normalized_value": "团队看板",
+            "scope": "project",
+            "confirmed": True,
+        },
+    )
+    assert memory.status_code == 201
+    later_global_memory = client.post(
+        "/api/memory/terms",
+        json={
+            "project_id": None,
+            "source_value": "任务看版",
+            "normalized_value": "全局看板",
+            "scope": "global",
+            "confirmed": True,
+        },
+    )
+    assert later_global_memory.status_code == 201
+
+    report = client.post(
+        "/api/reports",
+        json={
+            "project_id": project["id"],
+            "title": "项目术语",
+            "transcript": "任务看版已完成更新。",
+            "skill_id": "default-weekly-meeting",
+        },
+    ).json()
+    job = client.post(
+        f"/api/reports/{report['id']}/generate", json={"provider_id": "mock"}
+    ).json()
+
+    assert job["status"] == "succeeded"
+    assert job["result"]["corrections"][0]["canonical"] == "团队看板"
+    generated = client.get(f"/api/reports/{report['id']}").json()
+    assert "团队看板" in generated["content"]["executive_summary"]
+    validation = client.get(f"/api/reports/{report['id']}/validation").json()
+    assert validation["valid"] is True
+    assert validation["issues"] == []
+
+
+def test_rule_issues_are_saved_for_human_review(client: TestClient) -> None:
+    class ForbiddenPhraseProvider(MockChatProvider):
+        id = "reviewable"
+
+        def generate(self, **kwargs):  # type: ignore[no-untyped-def]
+            content = super().generate(**kwargs)
+            content["executive_summary"] += " 图文结合版"
+            return content
+
+    client.app.dependency_overrides[get_provider_registry] = lambda: ProviderRegistry(
+        [ForbiddenPhraseProvider()]
+    )
+    project = client.post("/api/projects", json={"name": "项目"}).json()
+    report = client.post(
+        "/api/reports",
+        json={
+            "project_id": project["id"],
+            "title": "待人工修订",
+            "transcript": "本周完成联调。",
+            "skill_id": "default-weekly-meeting",
+        },
+    ).json()
+
+    job = client.post(
+        f"/api/reports/{report['id']}/generate",
+        json={"provider_id": "reviewable"},
+    )
+    assert job.status_code == 200
+    assert job.json()["status"] == "succeeded"
+    assert job.json()["result"]["validation"]["valid"] is False
+
+    saved = client.get(f"/api/reports/{report['id']}").json()
+    assert "图文结合版" in saved["content"]["executive_summary"]
+    confirmation = client.post(f"/api/reports/{report['id']}/confirm")
+    assert confirmation.status_code == 422

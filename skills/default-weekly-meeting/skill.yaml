@@ -1,0 +1,15 @@
+schema_version: "0.1"
+id: default-weekly-meeting
+name: 通用周会纪要
+version: 0.2.0
+description: 将会议逐字稿整理成按工作维度归类、可核验、适合团队复盘的结构化周会纪要。
+locale: zh-CN
+files:
+  instructions: instructions.md
+  prompt: prompts/generate.md
+  report_schema: schemas/report.schema.json
+  terms: memory/default-terms.yaml
+  validation: validators/rules.yaml
+  templates:
+    html: templates/report.html
+    css: templates/report.css

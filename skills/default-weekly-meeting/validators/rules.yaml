@@ -1,0 +1,34 @@
+schema_version: "0.1"
+required_sections:
+  - id: overall_conclusion
+    title: 本周整体结论
+  - id: this_week_progress
+    title: 本周工作进展
+  - id: next_week_plan
+    title: 下周重点计划
+  - id: risks_and_coordination
+    title: 风险与待协调事项
+allow_additional_sections: false
+forbidden_phrases:
+  - phrase: 图文结合版
+    message: 页面不得暴露内部输出形式“图文结合版”。
+  - phrase: 内容来源
+    message: 页面不得展示内部内容来源。
+  - phrase: 汇报口径
+    message: 页面不得展示内部汇报口径。
+  - phrase: 整理口径
+    message: 页面不得展示内部整理口径。
+  - phrase: 输出形式
+    message: 页面不得展示内部输出形式。
+  - phrase: 老板汇报版
+    message: 管理层写作风格不得作为页面标签展示。
+  - phrase: 管理层汇报版
+    message: 管理层写作风格不得作为页面标签展示。
+  - phrase: AI生成
+    message: 页面不得包含生成方式说明。
+  - phrase: AI 生成
+    message: 页面不得包含生成方式说明。
+terminology:
+  enabled: true
+  severity: error
+  confirmed_only: true

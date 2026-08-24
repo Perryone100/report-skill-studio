@@ -1,0 +1,17 @@
+schema_version: "0.1"
+terms:
+  - canonical: 任务看板
+    variants: [任务看版, 任务版]
+    layer: fixed
+    confirmed: true
+    note: 仅用于演示术语纠错；实际项目请通过已确认术语记忆覆盖。
+  - canonical: 星云项目
+    variants: [星云计划项目, 星云计划]
+    layer: fixed
+    confirmed: true
+    note: 完全虚构的示例项目名，仅用于测试最长变体优先规则。
+  - canonical: OCR
+    variants: [O C R, O-C-R]
+    layer: fixed
+    confirmed: true
+    case_sensitive: true

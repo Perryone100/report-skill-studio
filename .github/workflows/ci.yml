@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server-tests:
+    name: Server tests (Python 3.11)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install server test dependencies
+        run: uv sync --frozen --package report-skill-server --extra dev --python 3.11
+      - name: Run server tests
+        run: >-
+          uv run --frozen --package report-skill-server pytest
+          apps/server/tests tests/e2e/test_mvp_report_flow.py
+
+  skill-engine-tests:
+    name: Skill engine tests (Python 3.11)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install Skill engine test dependencies
+        run: uv sync --frozen --package report-skill-engine --extra test --python 3.11
+      - name: Run Skill engine tests
+        run: uv run --frozen --package report-skill-engine pytest packages/skill_engine/tests
+
+  report-renderer-tests:
+    name: Report renderer tests (Python 3.11)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install renderer test dependencies
+        run: uv sync --frozen --package report-skill-renderer --extra test --python 3.11
+      - name: Run renderer tests without a browser
+        run: uv run --frozen --package report-skill-renderer pytest packages/report_renderer/tests
+
+  web:
+    name: Web test and build (Node 22)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+          run_install: false
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install web dependencies without lifecycle scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Run web tests
+        run: pnpm test:web
+      - name: Build web application
+        run: pnpm build:web

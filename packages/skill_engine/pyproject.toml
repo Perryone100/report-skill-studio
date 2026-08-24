@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "report-skill-engine"
+version = "0.1.0"
+description = "Declarative report Skill loading and deterministic validation."
+requires-python = ">=3.11"
+dependencies = [
+  "jsonschema>=4.21,<5",
+  "pydantic>=2.7,<3",
+  "PyYAML>=6.0,<7",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8.2,<9"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/skill_engine"]

@@ -1,0 +1,39 @@
+import json
+
+import httpx
+
+from report_skill_server.providers import OpenAICompatibleChatProvider
+
+
+def test_openai_compatible_provider_returns_json_object() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["Authorization"] == "Bearer secret"
+        payload = json.loads(request.content)
+        assert payload["model"] == "test-model"
+        assert payload["response_format"] == {"type": "json_object"}
+        assert "根据逐字稿生成报告" in payload["messages"][1]["content"]
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {"message": {"content": '{"title":"报告","sections":[]}'}}
+                ]
+            },
+        )
+
+    provider = OpenAICompatibleChatProvider(
+        base_url="https://model.example/v1",
+        api_key="secret",
+        model="test-model",
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    result = provider.generate(
+        transcript="逐字稿",
+        title="报告",
+        instructions="只输出 JSON",
+        prompt="根据逐字稿生成报告",
+        schema={"type": "object"},
+    )
+
+    assert result["title"] == "报告"

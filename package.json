@@ -1,0 +1,10 @@
+{
+  "name": "report-skill-studio",
+  "private": true,
+  "packageManager": "pnpm@11.19.0",
+  "scripts": {
+    "dev:web": "pnpm --filter @report-skill-studio/web dev",
+    "build:web": "pnpm --filter @report-skill-studio/web build",
+    "test:web": "pnpm --filter @report-skill-studio/web test"
+  }
+}

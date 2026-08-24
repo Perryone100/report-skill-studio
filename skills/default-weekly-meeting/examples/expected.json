@@ -1,0 +1,65 @@
+{
+  "title": "产品研发周会纪要",
+  "meeting_date": "2026-08-21",
+  "executive_summary": "本周工作进入灰度验证与跨团队联调阶段；模块 A 已完成灰度发布，当前主要风险是模块 B 的测试数据依赖和平台统计口径差异。",
+  "summary_cards": [
+    { "label": "本周阶段", "value": "灰度验证与跨团队联调", "tone": "info" },
+    { "label": "核心进展", "value": "模块 A 完成灰度发布", "tone": "success" },
+    { "label": "重点风险", "value": "测试数据依赖与统计口径差异", "tone": "warning" }
+  ],
+  "sections": [
+    {
+      "id": "overall_conclusion",
+      "title": "本周整体结论",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "模块 A 已完成灰度发布；当前工作重点转向模块 B 联调和平台统计口径核对。"
+        }
+      ]
+    },
+    {
+      "id": "this_week_progress",
+      "title": "本周工作进展",
+      "blocks": [
+        {
+          "type": "project_table",
+          "columns": ["工作项", "本周进展", "当前状态", "下一步"],
+          "rows": [
+            ["功能模块 A", "完成灰度发布，回归检查通过", "已完成", "观察关键指标"],
+            ["功能模块 B", "接口联调完成 50%", "进行中", "取得测试数据后继续联调"],
+            ["活动页面 C", "完成需求确认", "进行中", "提交首版"],
+            ["平台监控", "补充异常告警", "进行中", "核对统计口径差异"]
+          ]
+        }
+      ]
+    },
+    {
+      "id": "next_week_plan",
+      "title": "下周重点计划",
+      "blocks": [
+        {
+          "type": "bullet_list",
+          "items": [
+            "观察功能模块 A 灰度指标。",
+            "继续功能模块 B 接口联调。",
+            "提交活动页面 C 首版。",
+            "核对平台统计口径差异。"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "risks_and_coordination",
+      "title": "风险与待协调事项",
+      "blocks": [
+        {
+          "type": "callout",
+          "title": "跨团队测试数据依赖",
+          "text": "功能模块 B 联调依赖协作团队补充测试数据，可能影响下周联调进度；需要明确测试数据交付时间。",
+          "tone": "warning"
+        }
+      ]
+    }
+  ]
+}
