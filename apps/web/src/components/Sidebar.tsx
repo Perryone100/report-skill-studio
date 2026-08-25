@@ -6,6 +6,7 @@ interface SidebarProps {
   projects: ProjectSummary[]
   reports: ReportSummary[]
   activeProjectId: string
+  activeReportId?: string
   onCreateProject: () => void
   onSelectProject: (projectId: string) => void
   onSelectReport: (report: ReportSummary) => void
@@ -21,6 +22,7 @@ export function Sidebar({
   projects,
   reports,
   activeProjectId,
+  activeReportId,
   onCreateProject,
   onSelectProject,
   onSelectReport,
@@ -69,7 +71,12 @@ export function Sidebar({
           {visibleReports.length > 0 ? (
             <div className="report-list">
               {visibleReports.map((report) => (
-                <button key={report.id} type="button" onClick={() => onSelectReport(report)}>
+                <button
+                  key={report.id}
+                  type="button"
+                  className={report.id === activeReportId ? 'active' : ''}
+                  onClick={() => onSelectReport(report)}
+                >
                   <span className="history-icon"><Icon name="document" /></span>
                   <span className="history-copy">
                     <strong>{report.title}</strong>

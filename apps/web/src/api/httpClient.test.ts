@@ -120,6 +120,48 @@ describe('HTTP API client', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
+  it('加载历史详情、自动保存工作副本并恢复版本', async () => {
+    const requests: Array<{ path: string; method: string; body?: Record<string, unknown> }> = []
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname
+      const method = init?.method ?? 'GET'
+      requests.push({
+        path,
+        method,
+        body: init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined,
+      })
+      if (path.endsWith('/versions/2/restore')) return jsonResponse(apiReport())
+      if (path.endsWith('/versions')) return jsonResponse([
+        {
+          id: 'version-2', report_id: 'report-1', version: 2, title: content.title,
+          transcript: '测试逐字稿', content, reason: 'generated', created_at: '2026-08-21T11:00:00Z',
+        },
+        {
+          id: 'version-1', report_id: 'report-1', version: 1, title: content.title,
+          transcript: '测试逐字稿', content: {}, reason: 'created', created_at: '2026-08-21T10:00:00Z',
+        },
+      ])
+      if (path.endsWith('/validation')) return jsonResponse({ valid: true, issues: [] })
+      if (path.endsWith('/draft') && method === 'PATCH') return jsonResponse(apiReport())
+      if (path.endsWith('/reports/report-1')) return jsonResponse(apiReport())
+      return jsonResponse({ detail: 'not found' }, 404)
+    })
+    const client = createHttpApiClient('http://localhost:8000/api', fetchMock as typeof fetch)
+
+    const loaded = await client.loadReport('report-1')
+    const saveResult = await client.saveReportDraft(loaded.draft!, '修改后的逐字稿')
+    const restored = await client.restoreReportVersion('report-1', 2)
+
+    expect(loaded).toMatchObject({ reportId: 'report-1', version: 2, status: 'draft' })
+    expect(loaded.versions.map((version) => version.hasContent)).toEqual([true, false])
+    expect(saveResult.version).toBe(2)
+    expect(restored.draft?.reportId).toBe('report-1')
+    const autosave = requests.find((request) => request.path.endsWith('/draft'))
+    expect(autosave?.body?.transcript).toBe('修改后的逐字稿')
+    expect((autosave?.body?.content as Record<string, unknown>).reportId).toBeUndefined()
+    expect(requests.some((request) => request.method === 'POST' && request.path.endsWith('/versions/2/restore'))).toBe(true)
+  })
+
   it('管理项目专词并使用确认后的矫正规则', async () => {
     const paths: string[] = []
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -179,9 +221,10 @@ describe('HTTP API client', () => {
     const client = createHttpApiClient('http://localhost:8000/api', fetchMock as typeof fetch)
     const draft: ReportDraft = { ...content, reportId: 'report-1' }
 
-    const result = await client.confirmReport(draft)
+    const result = await client.confirmReport(draft, '测试逐字稿')
 
     expect(result.confirmed).toBe(true)
+    expect(patchPayload?.transcript).toBe('测试逐字稿')
     expect((patchPayload?.content as Record<string, unknown>).reportId).toBeUndefined()
     expect(stripReportMetadata(draft)).toEqual(content)
   })

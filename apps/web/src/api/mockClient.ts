@@ -2,7 +2,9 @@ import { ApiError, type WorkbenchApi } from './client'
 import type {
   ExportArtifact,
   GenerateReportInput,
+  LoadedReport,
   ReportDraft,
+  ReportVersionEntry,
   TerminologyMemoryEntry,
   WorkspaceBootstrap,
 } from './types'
@@ -170,6 +172,69 @@ function buildDraft(input: GenerateReportInput): ReportDraft {
   }
 }
 
+interface MockReportRecord {
+  projectId: string
+  transcript: string
+  skillId: string
+  draft: ReportDraft
+  status: 'draft' | 'confirmed'
+  version: number
+  updatedAt: string
+  versions: Array<ReportVersionEntry & { draft: ReportDraft | null }>
+}
+
+const mockReports = new Map<string, MockReportRecord>()
+
+function ensureMockReport(reportId: string): MockReportRecord {
+  const existing = mockReports.get(reportId)
+  if (existing) return existing
+  const summary = bootstrap.reports.find((report) => report.id === reportId)
+  if (!summary) throw new ApiError('没有找到这份历史报告。', 'HTTP_404')
+  const draft = buildDraft({
+    projectId: summary.projectId,
+    title: summary.title,
+    transcript: '这是一份 Mock 历史逐字稿，用于体验报告加载、自动保存与版本恢复。',
+    skillId: bootstrap.skills[0].id,
+    modelId: bootstrap.models[0].id,
+  })
+  draft.reportId = reportId
+  const updatedAt = summary.updatedAt
+  const record: MockReportRecord = {
+    projectId: summary.projectId,
+    transcript: '这是一份 Mock 历史逐字稿，用于体验报告加载、自动保存与版本恢复。',
+    skillId: bootstrap.skills[0].id,
+    draft,
+    status: summary.status === 'draft' ? 'draft' : 'confirmed',
+    version: 2,
+    updatedAt,
+    versions: [
+      { id: `${reportId}-v2`, reportId, version: 2, title: draft.title, reason: 'generated', createdAt: updatedAt, hasContent: true, draft: structuredClone(draft) },
+      { id: `${reportId}-v1`, reportId, version: 1, title: draft.title, reason: 'created', createdAt: updatedAt, hasContent: false, draft: null },
+    ],
+  }
+  mockReports.set(reportId, record)
+  return record
+}
+
+function loadMockReport(record: MockReportRecord): LoadedReport {
+  return {
+    reportId: record.draft.reportId,
+    projectId: record.projectId,
+    title: record.draft.title,
+    transcript: record.transcript,
+    skillId: record.skillId,
+    status: record.status,
+    version: record.version,
+    updatedAt: record.updatedAt,
+    draft: structuredClone(record.draft),
+    issues: [],
+    versions: record.versions.map(({ draft, ...version }) => ({
+      ...structuredClone(version),
+      content: draft ? (({ reportId: _reportId, ...content }) => content)(structuredClone(draft)) : undefined,
+    })),
+  }
+}
+
 export const mockApiClient: WorkbenchApi = {
   async getWorkspace(signal) {
     await wait(450, signal)
@@ -228,11 +293,101 @@ export const mockApiClient: WorkbenchApi = {
       throw new ApiError('模拟模型服务暂时不可用，请稍后重试。', 'MODEL_UNAVAILABLE')
     }
     await wait(900, signal)
-    return { report: buildDraft(input), issues: [], confirmed: false }
+    const report = buildDraft(input)
+    const now = new Date().toISOString()
+    const record: MockReportRecord = {
+      projectId: input.projectId,
+      transcript: input.transcript,
+      skillId: input.skillId,
+      draft: report,
+      status: 'draft',
+      version: 2,
+      updatedAt: now,
+      versions: [
+        { id: `${report.reportId}-v2`, reportId: report.reportId, version: 2, title: report.title, reason: 'generated', createdAt: now, hasContent: true, draft: structuredClone(report) },
+        { id: `${report.reportId}-v1`, reportId: report.reportId, version: 1, title: report.title, reason: 'created', createdAt: now, hasContent: false, draft: null },
+      ],
+    }
+    mockReports.set(report.reportId, record)
+    bootstrap.reports.unshift({
+      id: report.reportId,
+      projectId: input.projectId,
+      title: report.title,
+      period: report.meeting_date,
+      status: 'draft',
+      updatedAt: now,
+    })
+    return { report: structuredClone(report), issues: [], confirmed: false }
   },
 
-  async confirmReport(report, signal) {
+  async loadReport(reportId, signal) {
+    await wait(250, signal)
+    return loadMockReport(ensureMockReport(reportId))
+  },
+
+  async saveReportDraft(report, transcript, signal) {
+    await wait(180, signal)
+    const record = ensureMockReport(report.reportId)
+    if (record.status === 'confirmed') throw new ApiError('已确认报告不可修改，请恢复历史版本为新草稿。', 'HTTP_409')
+    record.draft = structuredClone(report)
+    record.transcript = transcript
+    record.updatedAt = new Date().toISOString()
+    const summary = bootstrap.reports.find((item) => item.id === report.reportId)
+    if (summary) Object.assign(summary, { title: report.title, period: report.meeting_date, updatedAt: record.updatedAt })
+    return { updatedAt: record.updatedAt, version: record.version }
+  },
+
+  async restoreReportVersion(reportId, version, signal) {
+    await wait(260, signal)
+    const record = ensureMockReport(reportId)
+    const snapshot = record.versions.find((item) => item.version === version)
+    if (!snapshot?.draft) throw new ApiError('这个版本没有可恢复的报告内容。', 'HTTP_409')
+    const restoredAt = new Date().toISOString()
+    if (record.status === 'confirmed') {
+      const restoredDraft = structuredClone(snapshot.draft)
+      restoredDraft.reportId = createId()
+      const restored: MockReportRecord = {
+        ...record,
+        draft: restoredDraft,
+        status: 'draft',
+        version: 1,
+        updatedAt: restoredAt,
+        versions: [{
+          id: `${restoredDraft.reportId}-v1`, reportId: restoredDraft.reportId, version: 1,
+          title: restoredDraft.title, reason: `restored_from:${reportId}:v${version}`,
+          createdAt: restoredAt, hasContent: true, draft: structuredClone(restoredDraft),
+        }],
+      }
+      mockReports.set(restoredDraft.reportId, restored)
+      bootstrap.reports.unshift({ id: restoredDraft.reportId, projectId: restored.projectId, title: restoredDraft.title, period: restoredDraft.meeting_date, status: 'draft', updatedAt: restoredAt })
+      return loadMockReport(restored)
+    }
+    record.version += 1
+    record.draft = { ...structuredClone(snapshot.draft), reportId }
+    record.updatedAt = restoredAt
+    record.versions.unshift({
+      id: `${reportId}-v${record.version}`, reportId, version: record.version,
+      title: record.draft.title, reason: `restored_from:v${version}`,
+      createdAt: restoredAt, hasContent: true, draft: structuredClone(record.draft),
+    })
+    return loadMockReport(record)
+  },
+
+  async confirmReport(report, transcript, signal) {
     await wait(350, signal)
+    const record = ensureMockReport(report.reportId)
+    record.draft = structuredClone(report)
+    record.transcript = transcript
+    record.status = 'confirmed'
+    record.version += 1
+    record.updatedAt = new Date().toISOString()
+    record.versions.unshift({
+      id: `${report.reportId}-v${record.version}`, reportId: report.reportId, version: record.version,
+      title: report.title, reason: 'confirmed', createdAt: record.updatedAt, hasContent: true,
+      draft: structuredClone(report),
+    })
+    const summary = bootstrap.reports.find((item) => item.id === report.reportId)
+    if (summary) Object.assign(summary, { status: 'confirmed', updatedAt: record.updatedAt })
     return { report: structuredClone(report), issues: [], confirmed: true }
   },
 

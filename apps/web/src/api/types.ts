@@ -21,6 +21,17 @@ export interface ReportSummary {
   updatedAt: string
 }
 
+export interface ReportVersionEntry {
+  id: string
+  reportId: string
+  version: number
+  title: string
+  reason: string
+  createdAt: string
+  hasContent: boolean
+  content?: ReportContent
+}
+
 export interface SkillOption {
   id: string
   name: string
@@ -136,6 +147,25 @@ export interface ReportOperationResult {
   report: ReportDraft
   issues: ValidationIssue[]
   confirmed: boolean
+}
+
+export interface LoadedReport {
+  reportId: string
+  projectId: string
+  title: string
+  transcript: string
+  skillId: string
+  status: 'draft' | 'confirmed'
+  version: number
+  updatedAt: string
+  draft: ReportDraft | null
+  issues: ValidationIssue[]
+  versions: ReportVersionEntry[]
+}
+
+export interface DraftSaveResult {
+  updatedAt: string
+  version: number
 }
 
 export interface ExportArtifact {

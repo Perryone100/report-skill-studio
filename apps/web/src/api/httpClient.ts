@@ -4,12 +4,14 @@ import type {
   ExportArtifact,
   GenerateReportInput,
   IssueSeverity,
+  LoadedReport,
   ModelOption,
   ProjectSummary,
   ReportContent,
   ReportDraft,
   ReportOperationResult,
   ReportSummary,
+  ReportVersionEntry,
   SaveTerminologyMemoryInput,
   SkillOption,
   TerminologyMemoryEntry,
@@ -31,7 +33,7 @@ interface ApiReport {
   title: string
   transcript: string
   skill_id: string
-  content: ReportContent
+  content: ReportContent | Record<string, never>
   status: 'draft' | 'confirmed'
   version: number
   created_at: string
@@ -69,6 +71,17 @@ interface ApiTerminologyMemory {
   confirmed: boolean
   created_at: string
   updated_at: string
+}
+
+interface ApiReportVersion {
+  id: string
+  report_id: string
+  version: number
+  title: string
+  transcript: string
+  content: ReportContent | Record<string, never>
+  reason: string
+  created_at: string
 }
 
 interface ApiValidationIssue {
@@ -120,7 +133,7 @@ function mapProject(project: ApiProject): ProjectSummary {
 }
 
 function mapReportSummary(report: ApiReport): ReportSummary {
-  const meetingDate = report.content?.meeting_date
+  const meetingDate = hasReportContent(report) ? report.content.meeting_date : undefined
   return {
     id: report.id,
     projectId: report.project_id,
@@ -162,11 +175,38 @@ function mapTerminologyMemory(memory: ApiTerminologyMemory): TerminologyMemoryEn
 }
 
 function mapDraft(report: ApiReport): ReportDraft {
-  const content = report.content
-  if (!content || !Array.isArray(content.sections) || !Array.isArray(content.summary_cards)) {
+  if (!hasReportContent(report)) {
     throw new ApiError('服务端返回的报告内容结构不完整。', 'INVALID_RESPONSE')
   }
-  return { ...content, reportId: report.id }
+  return { ...report.content, reportId: report.id }
+}
+
+function hasReportContent(report: ApiReport): report is ApiReport & { content: ReportContent } {
+  const content = report.content as Partial<ReportContent>
+  return Boolean(
+    content
+    && Array.isArray(content.sections)
+    && Array.isArray(content.summary_cards),
+  )
+}
+
+function mapVersion(version: ApiReportVersion): ReportVersionEntry {
+  const content = hasCanonicalContent(version.content) ? version.content : undefined
+  return {
+    id: version.id,
+    reportId: version.report_id,
+    version: version.version,
+    title: version.title,
+    reason: version.reason,
+    createdAt: version.created_at,
+    hasContent: Boolean(content),
+    content,
+  }
+}
+
+function hasCanonicalContent(content: ReportContent | Record<string, never>): content is ReportContent {
+  const candidate = content as Partial<ReportContent>
+  return Boolean(candidate && Array.isArray(candidate.sections) && Array.isArray(candidate.summary_cards))
 }
 
 function mapValidation(result: ApiValidationResult): ValidationIssue[] {
@@ -232,6 +272,28 @@ export function createHttpApiClient(
     if (!response.ok) throw new ApiError(await errorMessage(response), `HTTP_${response.status}`)
   }
 
+  const loadReportBundle = async (report: ApiReport, signal?: AbortSignal): Promise<LoadedReport> => {
+    const [versions, validation] = await Promise.all([
+      requestJson<ApiReportVersion[]>(`/reports/${report.id}/versions`, {}, signal),
+      hasReportContent(report)
+        ? requestValidation(report.id, signal)
+        : Promise.resolve<ApiValidationResult>({ valid: false, issues: [] }),
+    ])
+    return {
+      reportId: report.id,
+      projectId: report.project_id,
+      title: report.title,
+      transcript: report.transcript,
+      skillId: report.skill_id,
+      status: report.status,
+      version: report.version,
+      updatedAt: report.updated_at,
+      draft: hasReportContent(report) ? mapDraft(report) : null,
+      issues: hasReportContent(report) ? mapValidation(validation) : [],
+      versions: versions.map(mapVersion),
+    }
+  }
+
   return {
     async getWorkspace(signal): Promise<WorkspaceBootstrap> {
       const [projects, reports, skills, providers] = await Promise.all([
@@ -283,6 +345,32 @@ export function createHttpApiClient(
       await requestVoid(`/memory/terms/${encodeURIComponent(memoryId)}`, { method: 'DELETE' }, signal)
     },
 
+    async loadReport(reportId, signal) {
+      const report = await requestJson<ApiReport>(`/reports/${encodeURIComponent(reportId)}`, {}, signal)
+      return loadReportBundle(report, signal)
+    },
+
+    async saveReportDraft(report, transcript, signal) {
+      const saved = await requestJson<ApiReport>(`/reports/${report.reportId}/draft`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          title: report.title,
+          transcript,
+          content: stripReportMetadata(report),
+        }),
+      }, signal)
+      return { updatedAt: saved.updated_at, version: saved.version }
+    },
+
+    async restoreReportVersion(reportId, version, signal) {
+      const report = await requestJson<ApiReport>(
+        `/reports/${encodeURIComponent(reportId)}/versions/${version}/restore`,
+        { method: 'POST' },
+        signal,
+      )
+      return loadReportBundle(report, signal)
+    },
+
     async generateReport(input: GenerateReportInput, signal): Promise<ReportOperationResult> {
       const created = await requestJson<ApiReport>('/reports', {
         method: 'POST',
@@ -311,10 +399,10 @@ export function createHttpApiClient(
       }
     },
 
-    async confirmReport(report: ReportDraft, signal): Promise<ReportOperationResult> {
+    async confirmReport(report: ReportDraft, transcript, signal): Promise<ReportOperationResult> {
       const saved = await requestJson<ApiReport>(`/reports/${report.reportId}`, {
         method: 'PATCH',
-        body: JSON.stringify({ title: report.title, content: stripReportMetadata(report) }),
+        body: JSON.stringify({ title: report.title, transcript, content: stripReportMetadata(report) }),
       }, signal)
       const validation = await requestValidation(report.reportId, signal)
       const issues = mapValidation(validation)

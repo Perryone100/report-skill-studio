@@ -57,7 +57,14 @@ class ReportCreate(BaseModel):
 
 class ReportUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
+    transcript: str | None = None
     content: dict[str, Any] | None = None
+
+
+class ReportDraftSave(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    transcript: str
+    content: dict[str, Any]
 
 
 class Report(BaseModel):
@@ -71,6 +78,17 @@ class Report(BaseModel):
     version: int
     created_at: datetime
     updated_at: datetime
+
+
+class ReportVersion(BaseModel):
+    id: str
+    report_id: str
+    version: int
+    title: str
+    transcript: str
+    content: dict[str, Any]
+    reason: str
+    created_at: datetime
 
 
 class GenerateReportRequest(BaseModel):

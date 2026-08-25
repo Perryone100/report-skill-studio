@@ -13,6 +13,13 @@ The project is currently under active MVP development.
 5. Render the confirmed report to HTML and PDF.
 6. Promote user-confirmed terminology corrections into project memory.
 
+Unconfirmed reports are auto-saved locally after editing pauses, without
+creating a noisy permanent version for every keystroke. Generated, confirmed,
+and explicitly restored checkpoints stay available in the version panel;
+restoring a confirmed report creates a new editable draft. Small wording fixes
+are proposed as reusable terminology corrections and only enter project memory
+after the user confirms them.
+
 The workbench includes a project-level terminology and spoken-correction table.
 Confirmed mappings are applied to later transcripts before model generation.
 They can also be applied immediately to the current transcript and unconfirmed

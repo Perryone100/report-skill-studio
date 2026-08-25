@@ -62,6 +62,56 @@ def test_report_lifecycle(client: TestClient) -> None:
     assert immutable.status_code == 409
 
 
+def test_draft_autosave_does_not_create_versions_and_restore_is_recoverable(
+    client: TestClient,
+) -> None:
+    project = client.post("/api/projects", json={"name": "自动保存测试"}).json()
+    report = client.post(
+        "/api/reports",
+        json={
+            "project_id": project["id"],
+            "title": "原始标题",
+            "transcript": "本周完成自动保存功能，下周验证历史版本恢复。",
+            "skill_id": "default-weekly-meeting",
+        },
+    ).json()
+    report_id = report["id"]
+    generated = client.post(
+        f"/api/reports/{report_id}/generate", json={"provider_id": "mock"}
+    )
+    assert generated.status_code == 200
+    generated_report = client.get(f"/api/reports/{report_id}").json()
+    generated_summary = generated_report["content"]["executive_summary"]
+
+    changed_content = dict(generated_report["content"])
+    changed_content["executive_summary"] = "这是自动保存后的工作副本。"
+    autosaved = client.patch(
+        f"/api/reports/{report_id}/draft",
+        json={
+            "title": "自动保存标题",
+            "transcript": "",
+            "content": changed_content,
+        },
+    )
+    assert autosaved.status_code == 200
+    assert autosaved.json()["version"] == 2
+    assert autosaved.json()["transcript"] == ""
+
+    versions = client.get(f"/api/reports/{report_id}/versions")
+    assert versions.status_code == 200
+    assert [item["version"] for item in versions.json()] == [2, 1]
+    assert versions.json()[0]["reason"].startswith("generated:")
+
+    restored = client.post(f"/api/reports/{report_id}/versions/2/restore")
+    assert restored.status_code == 200
+    assert restored.json()["version"] == 3
+    assert restored.json()["title"] == "原始标题"
+    assert restored.json()["content"]["executive_summary"] == generated_summary
+    assert [item["version"] for item in client.get(
+        f"/api/reports/{report_id}/versions"
+    ).json()] == [3, 2, 1]
+
+
 def test_missing_project_returns_404(client: TestClient) -> None:
     response = client.post(
         "/api/reports",

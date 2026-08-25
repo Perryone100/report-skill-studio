@@ -3,6 +3,7 @@ import type { ReportDraft } from '../api'
 import {
   applyTerminologyToDraft,
   deriveWorkflowState,
+  inferTerminologyCorrections,
   replaceTerminologyInText,
   validateReport,
 } from './workbench'
@@ -110,6 +111,7 @@ describe('deriveWorkflowState', () => {
     }
     expect(deriveWorkflowState({ ...base, isConfirmed: false }).canExport).toBe(false)
     expect(deriveWorkflowState({ ...base, isConfirmed: true }).canExport).toBe(true)
+    expect(deriveWorkflowState({ ...base, isConfirmed: true }).canConfirm).toBe(false)
   })
 })
 
@@ -137,5 +139,37 @@ describe('项目术语应用', () => {
     expect(JSON.stringify(result.draft)).not.toContain('模块爱')
     expect(result.draft.reportId).toBe('report-1')
     expect(result.draft.sections[0].id).toBe('overall_conclusion')
+  })
+})
+
+describe('从人工修改中学习', () => {
+  it('从同一位置的小范围修改中提取候选矫正规则', () => {
+    const baseline = validDraft()
+    baseline.executive_summary = '模块爱本周完成联调。'
+    const current = structuredClone(baseline)
+    current.executive_summary = '功能模块 A本周完成联调。'
+
+    expect(inferTerminologyCorrections(baseline, current)).toEqual([{
+      id: '模块爱\u0000功能模块 a',
+      sourceValue: '模块爱',
+      normalizedValue: '功能模块 A',
+      count: 1,
+    }])
+  })
+
+  it('合并跨字段的相同修改次数，并忽略大段重写', () => {
+    const baseline = validDraft()
+    baseline.executive_summary = '模块爱进入联调。'
+    baseline.summary_cards[0].value = '模块爱已上线'
+    const current = structuredClone(baseline)
+    current.executive_summary = '功能模块 A进入联调。'
+    current.summary_cards[0].value = '功能模块 A已上线'
+    current.sections[0].blocks = [{ type: 'paragraph', text: '这是完全不同的一整段内容；不应该被当作术语。' }]
+
+    expect(inferTerminologyCorrections(baseline, current)).toMatchObject([{
+      sourceValue: '模块爱',
+      normalizedValue: '功能模块 A',
+      count: 2,
+    }])
   })
 })

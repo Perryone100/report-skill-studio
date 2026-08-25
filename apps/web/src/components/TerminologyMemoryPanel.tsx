@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { TerminologyMemoryEntry } from '../api'
+import type { CorrectionSuggestion } from '../domain/workbench'
 import { Icon } from './Icons'
 
 interface TerminologyMemoryPanelProps {
@@ -10,6 +11,8 @@ interface TerminologyMemoryPanelProps {
   onApply: (entry: TerminologyMemoryEntry) => void
   onDelete: (entry: TerminologyMemoryEntry) => Promise<void>
   canApplyToDraft: boolean
+  suggestions: CorrectionSuggestion[]
+  onDismissSuggestion: (suggestion: CorrectionSuggestion) => void
 }
 
 export function TerminologyMemoryPanel({
@@ -20,11 +23,14 @@ export function TerminologyMemoryPanel({
   onApply,
   onDelete,
   canApplyToDraft,
+  suggestions,
+  onDismissSuggestion,
 }: TerminologyMemoryPanelProps) {
   const [sourceValue, setSourceValue] = useState('')
   const [normalizedValue, setNormalizedValue] = useState('')
   const [saving, setSaving] = useState(false)
   const [deletingId, setDeletingId] = useState('')
+  const [savingSuggestionId, setSavingSuggestionId] = useState('')
 
   const canSave = sourceValue.trim()
     && normalizedValue.trim()
@@ -73,6 +79,44 @@ export function TerminologyMemoryPanel({
       </div>
 
       <div className="terminology-body">
+        {suggestions.length > 0 && (
+          <div className="correction-suggestions">
+            <div className="suggestion-title">
+              <strong>发现可记忆的修改</strong>
+              <small>确认后才会加入项目记忆</small>
+            </div>
+            {suggestions.map((suggestion) => (
+              <article key={suggestion.id}>
+                <div className="terminology-pair">
+                  <span>{suggestion.sourceValue}</span>
+                  <span className="terminology-inline-arrow">→</span>
+                  <strong>{suggestion.normalizedValue}</strong>
+                </div>
+                <div className="suggestion-actions">
+                  <small>{suggestion.count > 1 ? `本次修改 ${suggestion.count} 处` : '本次修改 1 处'}</small>
+                  <button type="button" onClick={() => onDismissSuggestion(suggestion)}>忽略</button>
+                  <button
+                    type="button"
+                    disabled={Boolean(savingSuggestionId)}
+                    onClick={async () => {
+                      setSavingSuggestionId(suggestion.id)
+                      try {
+                        await onSave(suggestion.sourceValue, suggestion.normalizedValue)
+                      } catch {
+                        // The parent displays the error and the suggestion stays available.
+                      } finally {
+                        setSavingSuggestionId('')
+                      }
+                    }}
+                  >
+                    {savingSuggestionId === suggestion.id ? '保存中' : '记住'}
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+
         <div className="terminology-form">
           <label>
             原始转写 / 常见误写

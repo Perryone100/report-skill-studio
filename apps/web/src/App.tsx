@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ApiError } from './api/client'
 import {
   apiClient,
   apiMode,
   type ModelOption,
+  type LoadedReport,
   type ReportDraft,
   type ReportSummary,
+  type ReportVersionEntry,
   type SkillOption,
   type TerminologyMemoryEntry,
   type ValidationIssue,
@@ -15,14 +17,17 @@ import { Icon } from './components/Icons'
 import { ReportEditor } from './components/ReportEditor'
 import { Sidebar } from './components/Sidebar'
 import { TerminologyMemoryPanel } from './components/TerminologyMemoryPanel'
+import { VersionHistoryPanel } from './components/VersionHistoryPanel'
 import {
   applyTerminologyToDraft,
   deriveWorkflowState,
+  inferTerminologyCorrections,
   replaceTerminologyInText,
   validateReport,
 } from './domain/workbench'
 
 type LoadState = 'loading' | 'ready' | 'error'
+type AutosaveStatus = 'idle' | 'dirty' | 'saving' | 'saved' | 'error'
 
 const exampleTranscript = `主持人：先同步本周的几个重点。功能模块 A 已完成核心流程联调，遗留问题本周五前收口，下周安排小流量灰度。
 
@@ -91,6 +96,58 @@ function App() {
   const [isCreatingProject, setIsCreatingProject] = useState(false)
   const [terminologyMemory, setTerminologyMemory] = useState<TerminologyMemoryEntry[]>([])
   const [isLoadingTerminology, setIsLoadingTerminology] = useState(false)
+  const [versions, setVersions] = useState<ReportVersionEntry[]>([])
+  const [currentReportVersion, setCurrentReportVersion] = useState<number | null>(null)
+  const [autosaveStatus, setAutosaveStatus] = useState<AutosaveStatus>('idle')
+  const [loadingReportId, setLoadingReportId] = useState('')
+  const [restoringVersion, setRestoringVersion] = useState<number | null>(null)
+  const [learningBaseline, setLearningBaseline] = useState<ReportDraft | null>(null)
+  const [dismissedSuggestionIds, setDismissedSuggestionIds] = useState<string[]>([])
+  const lastSavedSignature = useRef('')
+  const saveSequence = useRef(0)
+
+  const draftSignature = (nextDraft: ReportDraft, nextTranscript: string) => JSON.stringify({
+    transcript: nextTranscript,
+    report: nextDraft,
+  })
+
+  const upsertReportSummary = (loaded: LoadedReport) => {
+    const summary: ReportSummary = {
+      id: loaded.reportId,
+      projectId: loaded.projectId,
+      title: loaded.title,
+      period: loaded.draft?.meeting_date || loaded.updatedAt.slice(0, 10),
+      status: loaded.status,
+      updatedAt: loaded.updatedAt,
+    }
+    setWorkspace((current) => {
+      if (!current) return current
+      return {
+        ...current,
+        reports: [summary, ...current.reports.filter((report) => report.id !== summary.id)],
+      }
+    })
+  }
+
+  const adoptLoadedReport = (loaded: LoadedReport) => {
+    const checkpoint = loaded.versions.find((version) => version.content)?.content
+    const baseline = checkpoint
+      ? { ...structuredClone(checkpoint), reportId: loaded.reportId }
+      : loaded.draft ? structuredClone(loaded.draft) : null
+    setProjectId(loaded.projectId)
+    setTranscript(loaded.transcript)
+    setSkillId((current) => loaded.skillId || current)
+    setDraft(loaded.draft)
+    setConfirmed(loaded.status === 'confirmed')
+    setServerIssues(loaded.issues)
+    setVersions(loaded.versions)
+    setCurrentReportVersion(loaded.version)
+    setLearningBaseline(baseline)
+    setDismissedSuggestionIds([])
+    lastSavedSignature.current = loaded.draft ? draftSignature(loaded.draft, loaded.transcript) : ''
+    setAutosaveStatus(loaded.draft ? 'saved' : 'idle')
+    upsertReportSummary(loaded)
+  }
 
   const loadWorkspace = async () => {
     setLoadState('loading')
@@ -132,6 +189,45 @@ function App() {
     return () => controller.abort()
   }, [projectId])
 
+  useEffect(() => {
+    if (!draft || confirmed) return
+    const signature = draftSignature(draft, transcript)
+    if (signature === lastSavedSignature.current) return
+
+    setAutosaveStatus('dirty')
+    const sequence = ++saveSequence.current
+    const controller = new AbortController()
+    const timer = window.setTimeout(() => {
+      setAutosaveStatus('saving')
+      void apiClient.saveReportDraft(draft, transcript, controller.signal)
+        .then((saved) => {
+          if (sequence !== saveSequence.current) return
+          lastSavedSignature.current = signature
+          setCurrentReportVersion(saved.version)
+          setAutosaveStatus('saved')
+          setWorkspace((current) => current ? {
+            ...current,
+            reports: current.reports.map((report) => report.id === draft.reportId ? {
+              ...report,
+              title: draft.title,
+              period: draft.meeting_date,
+              updatedAt: saved.updatedAt,
+            } : report),
+          } : current)
+        })
+        .catch((error) => {
+          if (controller.signal.aborted || sequence !== saveSequence.current) return
+          setAutosaveStatus('error')
+          setActionError(error instanceof Error ? error.message : '草稿自动保存失败。')
+        })
+    }, 800)
+
+    return () => {
+      window.clearTimeout(timer)
+      controller.abort()
+    }
+  }, [draft, transcript, confirmed])
+
   const localIssues = useMemo(
     () => (draft ? validateReport(draft).map((issue) => ({ ...issue, source: 'local' as const })) : []),
     [draft],
@@ -158,12 +254,20 @@ function App() {
   const selectedSkill = workspace?.skills.find((skill) => skill.id === skillId)
   const selectedModel = workspace?.models.find((model) => model.id === modelId)
   const warningCount = issues.filter((issue) => issue.severity === 'warning').length
+  const correctionSuggestions = useMemo(() => {
+    if (!learningBaseline || !draft || confirmed) return []
+    const knownSources = new Set(terminologyMemory.map((entry) => entry.sourceValue.toLocaleLowerCase()))
+    const dismissed = new Set(dismissedSuggestionIds)
+    return inferTerminologyCorrections(learningBaseline, draft)
+      .filter((suggestion) => !knownSources.has(suggestion.sourceValue.toLocaleLowerCase()))
+      .filter((suggestion) => !dismissed.has(suggestion.id))
+  }, [learningBaseline, draft, confirmed, terminologyMemory, dismissedSuggestionIds])
 
   const updateDraft = (nextDraft: ReportDraft) => {
     setDraft(nextDraft)
     setConfirmed(false)
     setServerIssues([])
-    setNotice('内容已修改，需要重新确认。')
+    setNotice('内容已修改，正在等待自动保存。')
   }
 
   const handleGenerate = async () => {
@@ -180,9 +284,8 @@ function App() {
         skillId,
         modelId,
       })
-      setDraft(result.report)
-      setServerIssues(result.issues)
-      setConfirmed(result.confirmed)
+      const loaded = await apiClient.loadReport(result.report.reportId)
+      adoptLoadedReport(loaded)
       setNotice('报告已生成，请检查并确认内容。')
     } catch (error) {
       if (error instanceof ApiError) {
@@ -200,10 +303,14 @@ function App() {
     setIsConfirming(true)
     setActionError('')
     try {
-      const result = await apiClient.confirmReport(draft)
+      const result = await apiClient.confirmReport(draft, transcript)
       setDraft(result.report)
       setServerIssues(result.issues)
       setConfirmed(result.confirmed)
+      if (result.confirmed) {
+        const loaded = await apiClient.loadReport(result.report.reportId)
+        adoptLoadedReport(loaded)
+      }
       setNotice(result.confirmed ? '内容已确认，现在可以导出。' : '服务端检查发现问题，请修改后重新确认。')
     } catch (error) {
       setActionError(error instanceof Error ? error.message : '确认失败。')
@@ -236,8 +343,36 @@ function App() {
     }
   }
 
-  const handleSelectReport = (report: ReportSummary) => {
-    setNotice(`已选择历史报告“${report.title}”；历史详情将在持久化 API 接入后加载。`)
+  const handleSelectReport = async (report: ReportSummary) => {
+    if (loadingReportId) return
+    setLoadingReportId(report.id)
+    setActionError('')
+    try {
+      const loaded = await apiClient.loadReport(report.id)
+      adoptLoadedReport(loaded)
+      setNotice(`已打开“${report.title}”。`)
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : '历史报告读取失败。')
+    } finally {
+      setLoadingReportId('')
+    }
+  }
+
+  const handleRestoreVersion = async (version: number) => {
+    if (!draft || restoringVersion !== null) return
+    setRestoringVersion(version)
+    setActionError('')
+    try {
+      const loaded = await apiClient.restoreReportVersion(draft.reportId, version)
+      adoptLoadedReport(loaded)
+      setNotice(confirmed
+        ? `已从 v${version} 创建一份可编辑的新草稿。`
+        : `已恢复到 v${version}，并保留了恢复前的版本。`)
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : '历史版本恢复失败。')
+    } finally {
+      setRestoringVersion(null)
+    }
   }
 
   const handleCreateProject = async () => {
@@ -341,15 +476,22 @@ function App() {
         projects={workspace.projects}
         reports={workspace.reports}
         activeProjectId={projectId}
+        activeReportId={draft?.reportId}
         onCreateProject={() => setShowProjectCreator(true)}
         onSelectProject={(nextProjectId) => {
           setProjectId(nextProjectId)
           setDraft(null)
           setConfirmed(false)
           setServerIssues([])
+          setVersions([])
+          setCurrentReportVersion(null)
+          setLearningBaseline(null)
+          setDismissedSuggestionIds([])
+          lastSavedSignature.current = ''
+          setAutosaveStatus('idle')
           setNotice('')
         }}
-        onSelectReport={handleSelectReport}
+        onSelectReport={(report) => void handleSelectReport(report)}
       />
 
       <main className="workspace">
@@ -487,7 +629,12 @@ function App() {
 
         <div className="content-grid">
           {draft ? (
-            <ReportEditor draft={draft} confirmed={confirmed} onChange={updateDraft} />
+            <ReportEditor
+              draft={draft}
+              confirmed={confirmed}
+              autosaveStatus={autosaveStatus}
+              onChange={updateDraft}
+            />
           ) : (
             <section className="empty-report">
               <div className="empty-illustration">
@@ -514,8 +661,20 @@ function App() {
                 onApply={handleApplyTerminology}
                 onDelete={handleDeleteTerminology}
                 canApplyToDraft={!confirmed && Boolean(transcript.trim() || draft)}
+                suggestions={correctionSuggestions}
+                onDismissSuggestion={(suggestion) => {
+                  setDismissedSuggestionIds((current) => [...current, suggestion.id])
+                }}
               />
             )}
+
+            <VersionHistoryPanel
+              versions={versions}
+              currentVersion={confirmed ? currentReportVersion : null}
+              confirmed={confirmed}
+              restoringVersion={restoringVersion}
+              onRestore={(version) => void handleRestoreVersion(version)}
+            />
 
             <section className="quality-panel">
               <div className="quality-heading">

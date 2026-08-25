@@ -20,7 +20,9 @@ from .models import (
     ProviderInfo,
     Report,
     ReportCreate,
+    ReportDraftSave,
     ReportUpdate,
+    ReportVersion,
     SkillInfo,
     TerminologyMemory,
     TerminologyMemoryCreate,
@@ -144,6 +146,43 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.patch("/api/reports/{report_id}/draft", response_model=Report)
+    def save_report_draft(
+        report_id: str,
+        payload: ReportDraftSave,
+        store: SQLiteStore = Depends(get_store),
+    ) -> Report:
+        try:
+            return store.save_report_draft(report_id, **payload.model_dump())
+        except NotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.get("/api/reports/{report_id}/versions", response_model=list[ReportVersion])
+    def list_report_versions(
+        report_id: str,
+        store: SQLiteStore = Depends(get_store),
+    ) -> list[ReportVersion]:
+        try:
+            return store.list_report_versions(report_id)
+        except NotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post(
+        "/api/reports/{report_id}/versions/{version}/restore",
+        response_model=Report,
+    )
+    def restore_report_version(
+        report_id: str,
+        version: int,
+        store: SQLiteStore = Depends(get_store),
+    ) -> Report:
+        try:
+            return store.restore_report_version(report_id, version)
+        except NotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.post("/api/reports/{report_id}/confirm", response_model=Report)
     def confirm_report(

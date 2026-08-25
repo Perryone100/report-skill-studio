@@ -15,6 +15,7 @@ from .models import (
     Project,
     Report,
     ReportStatus,
+    ReportVersion,
     TerminologyMemory,
     new_id,
     utc_now,
@@ -49,6 +50,8 @@ CREATE TABLE IF NOT EXISTS report_versions (
     id TEXT PRIMARY KEY,
     report_id TEXT NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
     version INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    transcript TEXT NOT NULL,
     content_json TEXT NOT NULL,
     reason TEXT NOT NULL,
     created_at TEXT NOT NULL,
@@ -107,6 +110,28 @@ class SQLiteStore:
     def initialize(self) -> None:
         with self.connect() as connection:
             connection.executescript(SCHEMA)
+            version_columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(report_versions)").fetchall()
+            }
+            if "title" not in version_columns:
+                connection.execute("ALTER TABLE report_versions ADD COLUMN title TEXT")
+            if "transcript" not in version_columns:
+                connection.execute("ALTER TABLE report_versions ADD COLUMN transcript TEXT")
+            connection.execute(
+                """
+                UPDATE report_versions
+                SET title = COALESCE(
+                    title,
+                    (SELECT reports.title FROM reports WHERE reports.id = report_versions.report_id)
+                ),
+                    transcript = COALESCE(
+                    transcript,
+                    (SELECT reports.transcript FROM reports WHERE reports.id = report_versions.report_id)
+                )
+                WHERE title IS NULL OR transcript IS NULL
+                """
+            )
 
     def create_project(self, name: str, description: str = "") -> Project:
         project_id = new_id()
@@ -162,7 +187,16 @@ class SQLiteStore:
                     now.isoformat(),
                 ),
             )
-            self._insert_version(connection, report_id, 1, content, "created", now)
+            self._insert_version(
+                connection,
+                report_id,
+                1,
+                title,
+                transcript,
+                content,
+                "created",
+                now,
+            )
         return self.get_report(report_id)
 
     def list_reports(self, project_id: str | None = None) -> list[Report]:
@@ -188,6 +222,7 @@ class SQLiteStore:
         report_id: str,
         *,
         title: str | None = None,
+        transcript: str | None = None,
         content: dict[str, Any] | None = None,
         reason: str = "edited",
     ) -> Report:
@@ -196,22 +231,124 @@ class SQLiteStore:
             raise ValueError("confirmed reports are immutable")
 
         next_title = title if title is not None else report.title
+        next_transcript = transcript if transcript is not None else report.transcript
         next_content = content if content is not None else report.content
         next_version = report.version + 1
         now = utc_now()
         with self.connect() as connection:
             connection.execute(
-                "UPDATE reports SET title = ?, content_json = ?, version = ?, updated_at = ? WHERE id = ?",
+                """
+                UPDATE reports
+                SET title = ?, transcript = ?, content_json = ?, version = ?, updated_at = ?
+                WHERE id = ?
+                """,
                 (
                     next_title,
+                    next_transcript,
                     json.dumps(next_content, ensure_ascii=False),
                     next_version,
                     now.isoformat(),
                     report_id,
                 ),
             )
-            self._insert_version(connection, report_id, next_version, next_content, reason, now)
+            self._insert_version(
+                connection,
+                report_id,
+                next_version,
+                next_title,
+                next_transcript,
+                next_content,
+                reason,
+                now,
+            )
         return self.get_report(report_id)
+
+    def save_report_draft(
+        self,
+        report_id: str,
+        *,
+        title: str,
+        transcript: str,
+        content: dict[str, Any],
+    ) -> Report:
+        """Persist the working copy without creating a permanent version."""
+
+        report = self.get_report(report_id)
+        if report.status is ReportStatus.CONFIRMED:
+            raise ValueError("confirmed reports are immutable")
+        if (
+            report.title == title
+            and report.transcript == transcript
+            and report.content == content
+        ):
+            return report
+
+        now = utc_now()
+        with self.connect() as connection:
+            connection.execute(
+                """
+                UPDATE reports
+                SET title = ?, transcript = ?, content_json = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    title,
+                    transcript,
+                    json.dumps(content, ensure_ascii=False),
+                    now.isoformat(),
+                    report_id,
+                ),
+            )
+        return self.get_report(report_id)
+
+    def list_report_versions(self, report_id: str) -> list[ReportVersion]:
+        self.get_report(report_id)
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM report_versions
+                WHERE report_id = ?
+                ORDER BY version DESC
+                """,
+                (report_id,),
+            ).fetchall()
+        return [self._report_version_from_row(row) for row in rows]
+
+    def get_report_version(self, report_id: str, version: int) -> ReportVersion:
+        self.get_report(report_id)
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM report_versions WHERE report_id = ? AND version = ?",
+                (report_id, version),
+            ).fetchone()
+        if row is None:
+            raise NotFoundError(f"report version not found: {report_id}@{version}")
+        return self._report_version_from_row(row)
+
+    def restore_report_version(self, report_id: str, version: int) -> Report:
+        report = self.get_report(report_id)
+        snapshot = self.get_report_version(report_id, version)
+        if report.status is ReportStatus.CONFIRMED:
+            restored = self.create_report(
+                project_id=report.project_id,
+                title=snapshot.title,
+                transcript=snapshot.transcript,
+                skill_id=report.skill_id,
+            )
+            return self.update_report(
+                restored.id,
+                title=snapshot.title,
+                transcript=snapshot.transcript,
+                content=snapshot.content,
+                reason=f"restored:{report_id}@{version}",
+            )
+        return self.update_report(
+            report_id,
+            title=snapshot.title,
+            transcript=snapshot.transcript,
+            content=snapshot.content,
+            reason=f"restored:{version}",
+        )
 
     def confirm_report(self, report_id: str) -> Report:
         report = self.get_report(report_id)
@@ -372,23 +509,41 @@ class SQLiteStore:
         connection: sqlite3.Connection,
         report_id: str,
         version: int,
+        title: str,
+        transcript: str,
         content: dict[str, Any],
         reason: str,
         created_at: datetime,
     ) -> None:
         connection.execute(
             """
-            INSERT INTO report_versions (id, report_id, version, content_json, reason, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO report_versions
+                (id, report_id, version, title, transcript, content_json, reason, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 new_id(),
                 report_id,
                 version,
+                title,
+                transcript,
                 json.dumps(content, ensure_ascii=False),
                 reason,
                 created_at.isoformat(),
             ),
+        )
+
+    @staticmethod
+    def _report_version_from_row(row: sqlite3.Row) -> ReportVersion:
+        return ReportVersion(
+            id=row["id"],
+            report_id=row["report_id"],
+            version=row["version"],
+            title=row["title"],
+            transcript=row["transcript"],
+            content=json.loads(row["content_json"]),
+            reason=row["reason"],
+            created_at=datetime.fromisoformat(row["created_at"]),
         )
 
     @staticmethod

@@ -5,6 +5,7 @@ interface ReportEditorProps {
   draft: ReportDraft
   confirmed: boolean
   onChange: (nextDraft: ReportDraft) => void
+  autosaveStatus: 'idle' | 'dirty' | 'saving' | 'saved' | 'error'
 }
 
 const blockLabel: Record<ReportBlock['type'], string> = {
@@ -15,7 +16,15 @@ const blockLabel: Record<ReportBlock['type'], string> = {
   callout: '重点提示',
 }
 
-export function ReportEditor({ draft, confirmed, onChange }: ReportEditorProps) {
+const autosaveLabels = {
+  idle: '已载入本地草稿',
+  dirty: '有修改 · 等待自动保存',
+  saving: '正在自动保存…',
+  saved: '已自动保存到本地',
+  error: '自动保存失败 · 请继续编辑重试',
+}
+
+export function ReportEditor({ draft, confirmed, onChange, autosaveStatus }: ReportEditorProps) {
   const update = <Key extends keyof ReportDraft>(key: Key, value: ReportDraft[Key]) =>
     onChange({ ...draft, [key]: value })
 
@@ -37,8 +46,8 @@ export function ReportEditor({ draft, confirmed, onChange }: ReportEditorProps) 
             </span>
           </div>
         </div>
-        <span className="autosave">
-          {confirmed ? '已锁定 · 如需修改请新建版本' : '尚未保存 · 点击确认后写入本地'}
+        <span className={`autosave ${autosaveStatus}`}>
+          {confirmed ? '已锁定 · 可从版本记录恢复为新草稿' : autosaveLabels[autosaveStatus]}
         </span>
       </div>
 

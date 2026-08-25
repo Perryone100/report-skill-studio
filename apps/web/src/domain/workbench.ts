@@ -55,6 +55,73 @@ const reportTextEntries = (draft: ReportDraft): TextEntry[] => [
   ]),
 ]
 
+export interface CorrectionSuggestion {
+  id: string
+  sourceValue: string
+  normalizedValue: string
+  count: number
+}
+
+function changedFragment(before: string, after: string) {
+  let prefixLength = 0
+  const maxPrefix = Math.min(before.length, after.length)
+  while (prefixLength < maxPrefix && before[prefixLength] === after[prefixLength]) prefixLength += 1
+
+  let suffixLength = 0
+  const maxSuffix = Math.min(before.length - prefixLength, after.length - prefixLength)
+  while (
+    suffixLength < maxSuffix
+    && before[before.length - suffixLength - 1] === after[after.length - suffixLength - 1]
+  ) suffixLength += 1
+
+  return {
+    sourceValue: before.slice(prefixLength, before.length - suffixLength).trim(),
+    normalizedValue: after.slice(prefixLength, after.length - suffixLength).trim(),
+    sharedContextLength: prefixLength + suffixLength,
+  }
+}
+
+/**
+ * Infer small, reusable wording corrections from a generated/loaded baseline and
+ * the user's current draft. Suggestions remain local until the user confirms one.
+ */
+export function inferTerminologyCorrections(
+  baseline: ReportDraft,
+  current: ReportDraft,
+): CorrectionSuggestion[] {
+  const beforeByPath = new Map(reportTextEntries(baseline).map((entry) => [entry.path, entry.text]))
+  const suggestions = new Map<string, CorrectionSuggestion>()
+  const sentencePunctuation = /[。！？；\n\r]/u
+
+  for (const entry of reportTextEntries(current)) {
+    if (entry.path === '$.meeting_date') continue
+    const before = beforeByPath.get(entry.path)
+    if (before === undefined || before === entry.text) continue
+    const fragment = changedFragment(before, entry.text)
+    const { sourceValue, normalizedValue, sharedContextLength } = fragment
+    if (!sourceValue || !normalizedValue) continue
+    if (sourceValue.toLocaleLowerCase() === normalizedValue.toLocaleLowerCase()) continue
+    if (sourceValue.length > 40 || normalizedValue.length > 40) continue
+    if (sentencePunctuation.test(sourceValue) || sentencePunctuation.test(normalizedValue)) continue
+    if (sharedContextLength === 0 && Math.max(sourceValue.length, normalizedValue.length) > 16) continue
+
+    const key = `${sourceValue.toLocaleLowerCase()}\u0000${normalizedValue.toLocaleLowerCase()}`
+    const existing = suggestions.get(key)
+    if (existing) {
+      existing.count += 1
+    } else {
+      suggestions.set(key, {
+        id: key,
+        sourceValue,
+        normalizedValue,
+        count: 1,
+      })
+    }
+  }
+
+  return [...suggestions.values()]
+}
+
 export function validateReport(draft: ReportDraft): ValidationIssue[] {
   const issues: ValidationIssue[] = []
   const textEntries = reportTextEntries(draft)
@@ -241,7 +308,7 @@ export function deriveWorkflowState(input: WorkflowInput) {
   const hasSelections = Boolean(input.projectId && input.skillId && input.modelId)
   return {
     canGenerate: input.transcript.trim().length >= 20 && hasSelections && !input.isGenerating,
-    canConfirm: Boolean(input.draft) && !hasBlockingIssue && !input.isGenerating,
+    canConfirm: Boolean(input.draft) && !input.isConfirmed && !hasBlockingIssue && !input.isGenerating,
     canExport: Boolean(input.draft) && input.isConfirmed && !hasBlockingIssue,
     hasBlockingIssue,
   }
