@@ -56,12 +56,19 @@ class Settings(BaseSettings):
         return self.data_dir / "artifacts"
 
     @property
+    def user_skills_dir(self) -> Path:
+        """Writable Skill catalog kept with local runtime data, outside Git."""
+
+        return self.data_dir / "skills"
+
+    @property
     def allowed_origins(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
     def ensure_directories(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
+        self.user_skills_dir.mkdir(parents=True, exist_ok=True)
 
 
 @lru_cache

@@ -33,12 +33,21 @@ class MockChatProvider:
             ],
             "sections": [
                 {
-                    "id": "overall_conclusion",
-                    "title": "本周整体结论",
+                    "id": "key_project_details",
+                    "title": "本周重点项目",
                     "blocks": [
                         {
-                            "type": "paragraph",
-                            "text": excerpt,
+                            "type": "status_cards",
+                            "cards": [
+                                {
+                                    "title": "逐字稿整理",
+                                    "status": "待确认",
+                                    "details": [
+                                        "已完成逐字稿导入。",
+                                        "下一步需人工核对事实、日期与术语。",
+                                    ],
+                                }
+                            ],
                         }
                     ],
                 },

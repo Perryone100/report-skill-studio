@@ -1,8 +1,30 @@
+from io import BytesIO
+from pathlib import Path
+from zipfile import ZIP_DEFLATED, ZipFile
+
 from fastapi.testclient import TestClient
 
 from report_skill_server.main import get_provider_registry
 from report_skill_server.providers import MockChatProvider
 from report_skill_server.services import ProviderRegistry
+
+
+def _skill_archive(skill_id: str = "custom-weekly-review") -> bytes:
+    skill_root = Path(__file__).resolve().parents[3] / "skills" / "default-weekly-meeting"
+    buffer = BytesIO()
+    with ZipFile(buffer, "w", compression=ZIP_DEFLATED) as archive:
+        for path in skill_root.rglob("*"):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(skill_root)
+            data = path.read_bytes()
+            if relative.as_posix() == "skill.yaml":
+                text = data.decode("utf-8")
+                text = text.replace("default-weekly-meeting", skill_id)
+                text = text.replace("name: 通用周会纪要", "name: 自定义周会复盘")
+                data = text.encode("utf-8")
+            archive.writestr(f"{skill_id}/{relative.as_posix()}", data)
+    return buffer.getvalue()
 
 
 def test_health(client: TestClient) -> None:
@@ -128,6 +150,88 @@ def test_lists_bundled_skills(client: TestClient) -> None:
     response = client.get("/api/skills")
     assert response.status_code == 200
     assert response.json()[0]["id"] == "default-weekly-meeting"
+    assert response.json()[0]["source"] == "bundled"
+    assert response.json()[0]["can_delete"] is False
+
+
+def test_installs_replaces_and_deletes_user_skill(client: TestClient) -> None:
+    archive = _skill_archive()
+    installed = client.post(
+        "/api/skills/install",
+        content=archive,
+        headers={"Content-Type": "application/zip"},
+    )
+    assert installed.status_code == 201
+    assert installed.json() == {
+        "id": "custom-weekly-review",
+        "name": "自定义周会复盘",
+        "version": "0.3.1",
+        "description": "将会议逐字稿整理成含重点项目详解、按工作项合并、事实可核验的结构化周会纪要。",
+        "locale": "zh-CN",
+        "source": "user",
+        "can_delete": True,
+    }
+
+    duplicate = client.post("/api/skills/install", content=archive)
+    assert duplicate.status_code == 409
+    replaced = client.post("/api/skills/install?replace=true", content=archive)
+    assert replaced.status_code == 201
+
+    listed = client.get("/api/skills").json()
+    assert [item["id"] for item in listed] == [
+        "default-weekly-meeting",
+        "custom-weekly-review",
+    ]
+    assert client.delete("/api/skills/custom-weekly-review").status_code == 204
+    assert client.delete("/api/skills/default-weekly-meeting").status_code == 409
+
+
+def test_rejects_unsafe_skill_zip_entry(client: TestClient) -> None:
+    buffer = BytesIO()
+    with ZipFile(buffer, "w") as archive:
+        archive.writestr("../outside.txt", "must not be written")
+        archive.writestr("skill.yaml", "invalid")
+
+    response = client.post("/api/skills/install", content=buffer.getvalue())
+
+    assert response.status_code == 422
+    assert "unsafe ZIP entry" in response.json()["detail"]
+
+
+def test_rejects_invalid_skill_upload_length_header(client: TestClient) -> None:
+    response = client.post(
+        "/api/skills/install",
+        content=_skill_archive(),
+        headers={"Content-Length": "not-a-number"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Invalid Content-Length header"
+
+
+def test_skill_used_by_report_cannot_be_deleted(client: TestClient) -> None:
+    installed = client.post("/api/skills/install", content=_skill_archive())
+    assert installed.status_code == 201
+    project = client.post("/api/projects", json={"name": "Skill 引用测试"}).json()
+    report = client.post(
+        "/api/reports",
+        json={
+            "project_id": project["id"],
+            "title": "自定义报告",
+            "transcript": "本周完成自定义 Skill 安装验证。",
+            "skill_id": "custom-weekly-review",
+        },
+    )
+    assert report.status_code == 201
+
+    deleted = client.delete("/api/skills/custom-weekly-review")
+    assert deleted.status_code == 409
+
+    replaced = client.post(
+        "/api/skills/install?replace=true", content=_skill_archive()
+    )
+    assert replaced.status_code == 422
+    assert "used by saved reports" in replaced.json()["detail"]
 
 
 def test_only_confirmed_corrections_enter_memory(client: TestClient) -> None:

@@ -256,7 +256,7 @@ def _render_report(report: Mapping[str, Any]) -> str:
         (
             '<section class="executive-summary report-section">',
             '<div class="section-heading"><span class="section-index">00</span>',
-            '<h2>本周整体结论</h2></div>',
+            '<h2>执行摘要</h2></div>',
             f'<div class="executive-summary-body">{_html_text(executive_summary)}</div>',
             "</section>",
         )

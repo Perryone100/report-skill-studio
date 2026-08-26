@@ -4,11 +4,11 @@ from copy import deepcopy
 from dataclasses import replace
 
 
-def _paragraph(report: dict[str, object], section_id: str) -> dict[str, object]:
+def _first_key_project_detail(report: dict[str, object]) -> list[str]:
     sections = report["sections"]
     assert isinstance(sections, list)
-    section = next(item for item in sections if item["id"] == section_id)
-    return section["blocks"][0]
+    section = next(item for item in sections if item["id"] == "key_project_details")
+    return section["blocks"][0]["cards"][0]["details"]
 
 
 def test_valid_reference_report_has_no_issues(default_skill, valid_report) -> None:
@@ -17,11 +17,17 @@ def test_valid_reference_report_has_no_issues(default_skill, valid_report) -> No
     assert result.valid
     assert result.issues == []
     assert result.model_dump() == {"issues": [], "valid": True}
+    assert [section["id"] for section in valid_report["sections"]] == [
+        "key_project_details",
+        "this_week_progress",
+        "next_week_plan",
+        "risks_and_coordination",
+    ]
 
 
 def test_reports_demo_term_as_noncanonical(default_skill, valid_report) -> None:
     report = deepcopy(valid_report)
-    _paragraph(report, "overall_conclusion")["text"] = "事项已登记到任务看版。"
+    _first_key_project_detail(report)[0] = "事项已登记到任务看版。"
 
     result = default_skill.validate(report)
     issues = [issue for issue in result.issues if issue.code == "terminology.noncanonical"]
@@ -30,12 +36,12 @@ def test_reports_demo_term_as_noncanonical(default_skill, valid_report) -> None:
     assert len(issues) == 1
     assert issues[0].value == "任务看版"
     assert issues[0].suggestion == "任务看板"
-    assert issues[0].path.endswith(".text")
+    assert issues[0].path.endswith(".details[0]")
 
 
 def test_reports_longest_synthetic_variant(default_skill, valid_report) -> None:
     report = deepcopy(valid_report)
-    _paragraph(report, "overall_conclusion")["text"] = "星云计划项目下周继续宣讲。"
+    _first_key_project_detail(report)[0] = "星云计划项目下周继续宣讲。"
 
     result = default_skill.validate(report)
     issues = [issue for issue in result.issues if issue.rule_id == "term:星云项目"]
@@ -101,7 +107,7 @@ def test_schema_errors_are_returned_as_issues(default_skill, valid_report) -> No
 
 def test_unconfirmed_correction_is_not_enforced(default_skill, valid_report) -> None:
     report = deepcopy(valid_report)
-    _paragraph(report, "overall_conclusion")["text"] = "事项已登记到任务看版。"
+    _first_key_project_detail(report)[0] = "事项已登记到任务看版。"
     terms = [
         term.model_copy(update={"confirmed": False})
         if term.canonical == "任务看板"

@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import re
+import shutil
+import stat
+import tempfile
+import zipfile
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
+from uuid import uuid4
 
 from report_renderer import ReportRendererError, render_html, render_pdf
 from skill_engine import (
@@ -44,11 +50,35 @@ class ProviderRegistry:
 
 
 class SkillRegistry:
-    def __init__(self, skills_dir: Path):
-        self.skills_dir = skills_dir
+    MAX_ARCHIVE_BYTES = 8 * 1024 * 1024
+    MAX_UNCOMPRESSED_BYTES = 25 * 1024 * 1024
+    MAX_FILES = 200
+
+    def __init__(self, skills_dir: Path, user_skills_dir: Path | None = None):
+        self.skills_dir = skills_dir.resolve()
+        self.user_skills_dir = user_skills_dir.resolve() if user_skills_dir else None
+
+    @staticmethod
+    def _validate_skill_id(skill_id: str) -> str:
+        if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", skill_id):
+            raise SkillLoadError("skill id must be a lowercase kebab-case identifier")
+        return skill_id
+
+    def _bundled_directory(self, skill_id: str) -> Path:
+        return self.skills_dir / self._validate_skill_id(skill_id)
+
+    def _user_directory(self, skill_id: str) -> Path | None:
+        if self.user_skills_dir is None:
+            return None
+        return self.user_skills_dir / self._validate_skill_id(skill_id)
 
     def get(self, skill_id: str) -> LoadedSkill:
-        skill = load_skill(self.skills_dir / skill_id)
+        bundled = self._bundled_directory(skill_id)
+        user = self._user_directory(skill_id)
+        directory = bundled if bundled.is_dir() else user
+        if directory is None or not directory.is_dir():
+            raise SkillLoadError(f"Skill not found: {skill_id}")
+        skill = load_skill(directory)
         if skill.manifest.id != skill_id:
             raise SkillLoadError(
                 f"skill directory {skill_id!r} contains manifest id {skill.manifest.id!r}"
@@ -56,23 +86,189 @@ class SkillRegistry:
         return skill
 
     def list(self) -> list[SkillInfo]:
-        if not self.skills_dir.is_dir():
-            return []
         skills: list[SkillInfo] = []
-        for directory in sorted(self.skills_dir.iterdir()):
-            if not directory.is_dir() or not (directory / "skill.yaml").is_file():
+        seen: set[str] = set()
+        catalogs = [(self.skills_dir, "bundled")]
+        if self.user_skills_dir is not None:
+            catalogs.append((self.user_skills_dir, "user"))
+        for catalog, source in catalogs:
+            if not catalog.is_dir():
                 continue
-            skill = load_skill(directory)
-            skills.append(
-                SkillInfo(
-                    id=skill.manifest.id,
-                    name=skill.manifest.name,
-                    version=skill.manifest.version,
-                    description=skill.manifest.description,
-                    locale=skill.manifest.locale,
-                )
-            )
+            for directory in sorted(catalog.iterdir()):
+                if (
+                    directory.name.startswith(".")
+                    or not directory.is_dir()
+                    or not (directory / "skill.yaml").is_file()
+                ):
+                    continue
+                skill = load_skill(directory)
+                if skill.manifest.id in seen:
+                    raise SkillLoadError(
+                        f"duplicate Skill id across catalogs: {skill.manifest.id}"
+                    )
+                seen.add(skill.manifest.id)
+                skills.append(self._skill_info(skill, source=source))
         return skills
+
+    def install_archive(
+        self,
+        archive: bytes,
+        *,
+        replace_existing: bool = False,
+        protected_skill_ids: set[str] | None = None,
+    ) -> SkillInfo:
+        if self.user_skills_dir is None:
+            raise SkillLoadError("user Skill installation is not configured")
+        if not archive:
+            raise SkillLoadError("Skill ZIP is empty")
+        if len(archive) > self.MAX_ARCHIVE_BYTES:
+            raise SkillLoadError("Skill ZIP exceeds the 8 MB upload limit")
+
+        self.user_skills_dir.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="skill-upload-") as temporary:
+            extraction_root = Path(temporary)
+            self._extract_archive(archive, extraction_root)
+            manifests = list(extraction_root.rglob("skill.yaml"))
+            if len(manifests) != 1:
+                raise SkillLoadError("Skill ZIP must contain exactly one skill.yaml")
+            candidate = load_skill(manifests[0].parent)
+            self._validate_templates(candidate)
+
+            skill_id = candidate.manifest.id
+            bundled = self._bundled_directory(skill_id)
+            if bundled.exists():
+                raise SkillLoadError(f"bundled Skill cannot be replaced: {skill_id}")
+            destination = self._user_directory(skill_id)
+            assert destination is not None
+            if destination.exists() and not replace_existing:
+                raise FileExistsError(
+                    f"Skill {skill_id} is already installed; enable replacement to update it"
+                )
+            if (
+                destination.exists()
+                and replace_existing
+                and skill_id in (protected_skill_ids or set())
+            ):
+                raise ValueError(
+                    f"Skill {skill_id} is used by saved reports and cannot be replaced"
+                )
+
+            staging = self.user_skills_dir / f".{skill_id}.{uuid4().hex}.tmp"
+            backup = self.user_skills_dir / f".{skill_id}.{uuid4().hex}.backup"
+            shutil.copytree(candidate.root, staging)
+            installed_candidate = load_skill(staging)
+            self._validate_templates(installed_candidate)
+            try:
+                if destination.exists():
+                    destination.rename(backup)
+                staging.rename(destination)
+            except Exception:
+                if backup.exists() and not destination.exists():
+                    backup.rename(destination)
+                raise
+            finally:
+                if staging.exists():
+                    shutil.rmtree(staging)
+                if backup.exists():
+                    shutil.rmtree(backup)
+
+        return self._skill_info(load_skill(destination), source="user")
+
+    def delete_user_skill(self, skill_id: str) -> None:
+        if self._bundled_directory(skill_id).is_dir():
+            raise ValueError("bundled Skills cannot be deleted")
+        directory = self._user_directory(skill_id)
+        if directory is None or not directory.is_dir():
+            raise SkillLoadError(f"installed Skill not found: {skill_id}")
+        shutil.rmtree(directory)
+
+    def _extract_archive(self, archive: bytes, target: Path) -> None:
+        from io import BytesIO
+
+        try:
+            bundle = zipfile.ZipFile(BytesIO(archive))
+        except zipfile.BadZipFile as exc:
+            raise SkillLoadError("uploaded file is not a valid ZIP archive") from exc
+        with bundle:
+            members = bundle.infolist()
+            files = [member for member in members if not member.is_dir()]
+            if len(files) > self.MAX_FILES:
+                raise SkillLoadError("Skill ZIP contains too many files")
+            if sum(member.file_size for member in files) > self.MAX_UNCOMPRESSED_BYTES:
+                raise SkillLoadError("Skill ZIP expands beyond the 25 MB safety limit")
+            for member in members:
+                name = member.filename
+                path = Path(name)
+                mode = member.external_attr >> 16
+                if (
+                    not name
+                    or "\\" in name
+                    or ":" in name
+                    or path.is_absolute()
+                    or ".." in path.parts
+                    or stat.S_ISLNK(mode)
+                    or member.flag_bits & 0x1
+                ):
+                    raise SkillLoadError(f"unsafe ZIP entry: {name!r}")
+                if member.is_dir():
+                    continue
+                destination = target.joinpath(*path.parts)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                with bundle.open(member) as source, destination.open("wb") as output:
+                    shutil.copyfileobj(source, output)
+
+    @staticmethod
+    def _validate_templates(skill: LoadedSkill) -> None:
+        templates = skill.manifest.files.templates
+        if templates is None:
+            raise SkillLoadError("installed Skill must define HTML and CSS templates")
+        preview = {
+            "title": "Skill 安装检查",
+            "meeting_date": "2026-01-01",
+            "executive_summary": "用于验证模板安全性的本地合成内容。",
+            "summary_cards": [{"label": "状态", "value": "检查中"}],
+            "sections": [
+                {
+                    "id": "preview",
+                    "title": "模板预览",
+                    "blocks": [
+                        {"type": "paragraph", "text": "合成段落"},
+                        {"type": "bullet_list", "items": ["合成列表"]},
+                        {
+                            "type": "project_table",
+                            "columns": ["工作项", "进展", "状态", "下一步"],
+                            "rows": [["示例", "完成", "已完成", "无"]],
+                        },
+                        {
+                            "type": "status_cards",
+                            "cards": [{"title": "示例", "status": "已完成"}],
+                        },
+                        {"type": "callout", "title": "提示", "text": "合成提示"},
+                    ],
+                }
+            ],
+        }
+        try:
+            render_html(
+                preview,
+                skill.root,
+                html_filename=templates.html,
+                css_filename=templates.css,
+            )
+        except ReportRendererError as exc:
+            raise SkillLoadError(f"unsafe or invalid Skill templates: {exc}") from exc
+
+    @staticmethod
+    def _skill_info(skill: LoadedSkill, *, source: str) -> SkillInfo:
+        return SkillInfo(
+            id=skill.manifest.id,
+            name=skill.manifest.name,
+            version=skill.manifest.version,
+            description=skill.manifest.description,
+            locale=skill.manifest.locale,
+            source=source,
+            can_delete=source == "user",
+        )
 
 
 class ReportGenerationService:

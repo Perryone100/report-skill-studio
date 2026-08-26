@@ -9,12 +9,15 @@ import type {
   ReportOperationResult,
   SaveTerminologyMemoryInput,
   TerminologyMemoryEntry,
+  SkillOption,
   WorkspaceBootstrap,
 } from './types'
 
 export interface WorkbenchApi {
   getWorkspace(signal?: AbortSignal): Promise<WorkspaceBootstrap>
   createProject(input: CreateProjectInput, signal?: AbortSignal): Promise<ProjectSummary>
+  installSkill(file: File, replaceExisting: boolean, signal?: AbortSignal): Promise<SkillOption>
+  deleteSkill(skillId: string, signal?: AbortSignal): Promise<void>
   listTerminologyMemory(projectId: string, signal?: AbortSignal): Promise<TerminologyMemoryEntry[]>
   saveTerminologyMemory(input: SaveTerminologyMemoryInput, signal?: AbortSignal): Promise<TerminologyMemoryEntry>
   deleteTerminologyMemory(memoryId: string, signal?: AbortSignal): Promise<void>

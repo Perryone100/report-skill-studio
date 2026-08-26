@@ -3,6 +3,9 @@
   "private": true,
   "packageManager": "pnpm@11.19.0",
   "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "doctor": "node scripts/dev.mjs --doctor",
+    "build:test-skills": "node scripts/build-test-skills.mjs",
     "dev:web": "pnpm --filter @report-skill-studio/web dev",
     "build:web": "pnpm --filter @report-skill-studio/web build",
     "test:web": "pnpm --filter @report-skill-studio/web test"

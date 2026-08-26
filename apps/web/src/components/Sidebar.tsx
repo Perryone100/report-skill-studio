@@ -34,8 +34,8 @@ export function Sidebar({
       <div className="brand">
         <div className="brand-mark"><Icon name="document" /></div>
         <div>
-          <strong>周报工坊</strong>
-          <span>Report Skill Studio</span>
+          <strong>Report Skill Studio</strong>
+          <span>本地报告工作台</span>
         </div>
       </div>
 

@@ -64,10 +64,12 @@ const bootstrap: WorkspaceBootstrap = {
   ],
   skills: [
     {
-      id: 'default-weekly-meeting@0.2.1',
+      id: 'default-weekly-meeting',
       name: '通用周会纪要',
-      version: '0.2.1',
+      version: '0.3.1',
       description: '按固定工作维度整理进展、计划与风险。',
+      source: 'bundled',
+      canDelete: false,
     },
   ],
   models: [
@@ -118,12 +120,22 @@ function buildDraft(input: GenerateReportInput): ReportDraft {
     ],
     sections: [
       {
-        id: 'overall_conclusion',
-        title: '本周整体结论',
+        id: 'key_project_details',
+        title: '本周重点项目',
         blocks: [
           {
-            type: 'paragraph',
-            text: `已完成需求梳理与核心链路联调。逐字稿摘要：${transcriptPreview}`,
+            type: 'status_cards',
+            cards: [
+              {
+                title: '功能模块 A',
+                status: '进行中',
+                details: [
+                  '已完成需求梳理与核心链路联调。',
+                  `逐字稿摘要：${transcriptPreview}`,
+                  '下一步完成验收并安排灰度。',
+                ],
+              },
+            ],
           },
         ],
       },
@@ -252,6 +264,37 @@ export const mockApiClient: WorkbenchApi = {
     }
     bootstrap.projects.push(project)
     return structuredClone(project)
+  },
+
+  async installSkill(file, replaceExisting, signal) {
+    await wait(260, signal)
+    if (!file.name.toLocaleLowerCase().endsWith('.zip')) {
+      throw new ApiError('请选择 ZIP 格式的 Skill 包。', 'HTTP_422')
+    }
+    const id = file.name.replace(/\.zip$/i, '').toLocaleLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'custom-skill'
+    const existingIndex = bootstrap.skills.findIndex((skill) => skill.id === id)
+    if (existingIndex >= 0 && !replaceExisting) {
+      throw new ApiError('同名 Skill 已存在；如需升级，请勾选替换已有版本。', 'HTTP_409')
+    }
+    const skill = {
+      id,
+      name: file.name.replace(/\.zip$/i, ''),
+      version: '1.0.0',
+      description: 'Mock 模式下安装的本地 Skill。',
+      source: 'user' as const,
+      canDelete: true,
+    }
+    if (existingIndex >= 0) bootstrap.skills.splice(existingIndex, 1, skill)
+    else bootstrap.skills.push(skill)
+    return structuredClone(skill)
+  },
+
+  async deleteSkill(skillId, signal) {
+    await wait(180, signal)
+    const index = bootstrap.skills.findIndex((skill) => skill.id === skillId)
+    if (index < 0) throw new ApiError('没有找到这个 Skill。', 'HTTP_404')
+    if (!bootstrap.skills[index].canDelete) throw new ApiError('内置 Skill 不能删除。', 'HTTP_409')
+    bootstrap.skills.splice(index, 1)
   },
 
   async listTerminologyMemory(projectId, signal) {

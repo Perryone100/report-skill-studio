@@ -1,4 +1,4 @@
-# Declarative Skill specification v0.1
+# Declarative Skill specification v0.3
 
 A report Skill controls writing instructions, the structured report contract,
 terminology, deterministic validation, and presentation. A Skill is data only:
@@ -37,7 +37,7 @@ Schema are sent with the user input. Provider output must be a JSON object.
 
 ## Canonical report contract
 
-The v0.1 workbench and renderer support this top-level shape:
+The v0.3 workbench and renderer support this top-level shape:
 
 ```text
 title
@@ -52,9 +52,26 @@ sections[]
 
 Supported block types are `paragraph`, `bullet_list`, `project_table`,
 `status_cards`, and `callout`. Skills may choose sections, titles, required
-sections, ordering, tones, terminology, and styling, but v0.1 does not support
-adding a new block type without application code. A Skill that uses the bundled
-renderer must keep its JSON Schema compatible with this canonical contract.
+sections, ordering, tones, terminology, and styling, but v0.3 does not support
+adding a new block type without application code. The top-level Schema must
+require exactly the canonical editable shape with `additionalProperties: false`.
+The loader rejects an incompatible Schema before it can reach the editor.
+
+## ZIP installation
+
+The workbench can install one Skill from a `.zip` file. The archive may either
+contain the Skill files at its root or wrap them in one directory, but it must
+contain exactly one `skill.yaml`. Skill IDs use lowercase kebab-case. Bundled
+IDs are reserved, and replacing an existing user Skill requires the explicit
+replacement option.
+
+Installation validates the manifest, every referenced file, JSON Schema,
+terminology and validation YAML, renderer compatibility, and HTML/CSS template
+safety before atomically moving the Skill into `data/skills/<skill-id>`. Archives
+larger than 8 MB, expanding beyond 25 MB, containing more than 200 files, or
+containing traversal paths, links, encryption, scripts, events, or external
+resources are rejected. Skills remain declarative and are never imported as
+Python or JavaScript.
 
 ## Validation and review
 

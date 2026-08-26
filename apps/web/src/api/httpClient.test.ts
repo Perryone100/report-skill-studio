@@ -41,7 +41,7 @@ describe('HTTP API client', () => {
       const path = new URL(String(input)).pathname
       if (path.endsWith('/projects')) return jsonResponse([{ id: 'project-1', name: '产品研发', description: '周会', created_at: '2026-08-21T10:00:00Z', updated_at: '2026-08-21T11:00:00Z' }])
       if (path.endsWith('/reports')) return jsonResponse([apiReport()])
-      if (path.endsWith('/skills')) return jsonResponse([{ id: 'default-weekly-meeting', name: '默认周会', version: '0.2.1', description: '通用周会报告', locale: 'zh-CN' }])
+      if (path.endsWith('/skills')) return jsonResponse([{ id: 'default-weekly-meeting', name: '默认周会', version: '0.3.1', description: '通用周会报告', locale: 'zh-CN', source: 'bundled', can_delete: false }])
       if (path.endsWith('/providers')) return jsonResponse([
         { id: 'mock', name: '本地演示模型', model: 'deterministic-mock', local: true, configured: true },
         { id: 'openai-compatible:writing-economy', name: 'OpenAI-compatible API', model: 'writing-economy', local: false, configured: true },
@@ -54,7 +54,7 @@ describe('HTTP API client', () => {
 
     expect(workspace.projects[0]).toMatchObject({ id: 'project-1', status: 'active' })
     expect(workspace.reports[0]).toMatchObject({ id: 'report-1', period: '2026-08-21' })
-    expect(workspace.skills[0].id).toBe('default-weekly-meeting')
+    expect(workspace.skills[0]).toMatchObject({ id: 'default-weekly-meeting', source: 'bundled', canDelete: false })
     expect(workspace.models[0]).toMatchObject({ id: 'mock', locality: 'local', ready: true })
     expect(workspace.models[1]).toMatchObject({
       id: 'openai-compatible:writing-economy',
@@ -203,6 +203,32 @@ describe('HTTP API client', () => {
       'POST /api/memory/terms',
       'GET /api/memory/terms?project_id=project-1',
       'DELETE /api/memory/terms/term-1',
+    ])
+  })
+
+  it('以 ZIP 原始内容安装并删除用户 Skill', async () => {
+    const requests: Array<{ path: string; method: string; contentType: string | null; body?: BodyInit | null }> = []
+    const installed = {
+      id: 'team-weekly', name: '团队周报', version: '1.0.0', description: '团队模板',
+      locale: 'zh-CN', source: 'user', can_delete: true,
+    }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input))
+      const headers = new Headers(init?.headers)
+      requests.push({ path: `${url.pathname}${url.search}`, method: init?.method ?? 'GET', contentType: headers.get('content-type'), body: init?.body })
+      if (init?.method === 'DELETE') return new Response(null, { status: 204 })
+      return jsonResponse(installed, 201)
+    })
+    const client = createHttpApiClient('http://localhost:8000/api', fetchMock as typeof fetch)
+    const archive = new File(['synthetic zip'], 'team-weekly.zip', { type: 'application/zip' })
+
+    const skill = await client.installSkill(archive, true)
+    await client.deleteSkill(skill.id)
+
+    expect(skill).toMatchObject({ id: 'team-weekly', source: 'user', canDelete: true })
+    expect(requests).toEqual([
+      { path: '/api/skills/install?replace=true', method: 'POST', contentType: 'application/zip', body: archive },
+      { path: '/api/skills/team-weekly', method: 'DELETE', contentType: null, body: undefined },
     ])
   })
 

@@ -121,6 +121,8 @@ class SkillInfo(BaseModel):
     version: str
     description: str
     locale: str
+    source: Literal["bundled", "user"] = "bundled"
+    can_delete: bool = False
 
 
 class TerminologyMemoryCreate(BaseModel):

@@ -68,6 +68,7 @@ cp .env.example .env
 | `RSS_OPENAI_COMPATIBLE_MODEL` | 兼容原配置的单模型标识，仅在复数配置为空时使用 |
 | `VITE_API_BASE_URL` | 前端访问的 API 地址，默认 `http://127.0.0.1:8000/api` |
 | `VITE_USE_MOCK_API` | 设为 `true` 时显式启用前端 mock API；默认 `false` |
+| `RSS_NO_OPEN` | 仅影响一键启动；设为 `true` 时不自动打开浏览器 |
 
 地址、密钥和至少一个模型同时设置后，服务端才会注册对应的 OpenAI-compatible 写作模型；保持为空时，开发环境只提供不会联网的 `mock` provider。多个模型共用同一兼容 API 地址和密钥，每个模型都会成为下拉框中的独立选项。
 
@@ -83,7 +84,30 @@ export RSS_OPENAI_COMPATIBLE_MODELS="your-standard-model,your-economy-model"
 
 不要把真实密钥写入 `.env.example`、测试夹具、SQLite、日志或提交记录。
 
-## 启动服务端
+## 启动工作台
+
+日常使用只需在仓库根目录运行一个命令：
+
+```bash
+npm run dev
+```
+
+它会同时启动本地 API 与 Web 工作台，等待两端就绪后打开
+`http://127.0.0.1:4173`。按 `Control+C` 会停止由本次命令启动的两个服务。
+若服务已经在运行，会直接复用。只想检查环境、不启动服务时运行：
+
+```bash
+npm run doctor
+```
+
+也可以在 Finder 中直接双击仓库根目录的 `启动工作台.command`，不需要先进入
+项目目录。启动器会优先使用 pnpm，普通终端没有 pnpm 时自动使用 Node.js 自带
+的 npm。诊断只判断云模型的地址、密钥和模型列表是否齐全，不显示它们的值。
+若不希望启动后自动打开浏览器，可临时运行 `RSS_NO_OPEN=true npm run dev`。
+
+以下分开启动命令保留给后端或前端单独调试。
+
+### 单独启动服务端
 
 ```bash
 uv run --package report-skill-server uvicorn report_skill_server.main:app \
@@ -100,7 +124,7 @@ curl http://127.0.0.1:8000/api/health
 
 OpenAPI 页面位于 `http://127.0.0.1:8000/docs`。
 
-## 启动前端
+### 单独启动前端
 
 另开一个终端：
 
@@ -120,7 +144,7 @@ VITE_USE_MOCK_API=true
 
 ## 日常启动、休眠与重启
 
-当前仓库以开发模式运行：服务端和前端各占用一个常驻进程。Mac 只是进入睡眠、终端窗口和进程仍保留时，唤醒后通常可以直接继续使用，不需要重新启动；关闭对应终端、结束进程或重启电脑后，需要重新运行启动命令。
+当前仓库仍以开发模式运行，`npm run dev` 会占用一个常驻终端。Mac 只是进入睡眠、终端窗口和进程仍保留时，唤醒后通常可以直接继续使用；关闭终端、结束进程或重启电脑后，需要重新运行启动命令或双击启动文件。
 
 面向普通用户发布时，推荐把前端和本地服务封装为 Tauri 桌面应用，由应用图标负责启动和停止本地服务，这样不需要用户接触终端。开发阶段可以补充双击启动脚本作为过渡方案，但它不替代正式的桌面安装包。
 
@@ -161,10 +185,13 @@ GitHub Actions 会把 server、Skill engine、report renderer 和 web 分为四�
 ```text
 data/
 ├── report-skill-studio.sqlite3
-└── artifacts/
+├── artifacts/
+└── skills/
 ```
 
-SQLite 保存项目、逐字稿、报告、版本及用户确认过的术语记忆；导出的 PDF 等文件位于 `artifacts/`。`data/`、数据库文件、`.env` 与常见模型目录都被 Git 忽略。修改 `RSS_DATA_DIR` 可以把数据放到仓库外的绝对路径。
+SQLite 保存项目、逐字稿、报告、版本及用户确认过的术语记忆；导出的 PDF 等文件位于 `artifacts/`；从界面安装的用户 Skill 位于 `skills/`。`data/`、数据库文件、`.env` 与常见模型目录都被 Git 忽略。修改 `RSS_DATA_DIR` 可以把数据放到仓库外的绝对路径。
+
+用户 Skill 以 ZIP 原始内容上传到本地 API，限制为 8 MB 压缩包、25 MB 解压内容和 200 个文件。服务端拒绝路径穿越、符号链接、加密条目、不安全模板和当前工作台无法编辑的报告 Schema。内置 Skill 不能替换或删除；被已有报告引用的用户 Skill 也不能删除，避免历史报告失去渲染规则。
 
 未确认报告采用“工作副本 + 检查点”两层持久化：编辑停止约 0.8 秒后，标题、逐字稿和结构化内容会写入工作副本，但不会增加版本号；模型生成、确认前保存和主动恢复才形成可恢复版本。已确认报告保持不可变，恢复其中的历史版本时会创建一份新的未确认草稿。前端会比较当前工作副本与最近检查点，保守提取短文本修改作为专词候选；候选只有在用户点击“记住”后才写入长期项目记忆。
 

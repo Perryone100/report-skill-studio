@@ -23,11 +23,14 @@ def store(tmp_path: Path) -> SQLiteStore:
 
 
 @pytest.fixture
-def client(store: SQLiteStore) -> Iterator[TestClient]:
+def client(store: SQLiteStore, tmp_path: Path) -> Iterator[TestClient]:
     app = create_app()
     app.dependency_overrides[get_store] = lambda: store
     app.dependency_overrides[get_provider_registry] = lambda: ProviderRegistry([MockChatProvider()])
     skills_dir = Path(__file__).resolve().parents[3] / "skills"
-    app.dependency_overrides[get_skill_registry] = lambda: SkillRegistry(skills_dir)
+    app.dependency_overrides[get_skill_registry] = lambda: SkillRegistry(
+        skills_dir,
+        tmp_path / "user-skills",
+    )
     with TestClient(app) as test_client:
         yield test_client

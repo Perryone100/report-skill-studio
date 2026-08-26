@@ -16,6 +16,7 @@ import {
 import { Icon } from './components/Icons'
 import { ReportEditor } from './components/ReportEditor'
 import { Sidebar } from './components/Sidebar'
+import { SkillManagerDialog } from './components/SkillManagerDialog'
 import { TerminologyMemoryPanel } from './components/TerminologyMemoryPanel'
 import { VersionHistoryPanel } from './components/VersionHistoryPanel'
 import {
@@ -91,6 +92,7 @@ function App() {
   const [notice, setNotice] = useState('')
   const [serverIssues, setServerIssues] = useState<ValidationIssue[]>([])
   const [showProjectCreator, setShowProjectCreator] = useState(false)
+  const [showSkillManager, setShowSkillManager] = useState(false)
   const [projectName, setProjectName] = useState('')
   const [projectDescription, setProjectDescription] = useState('')
   const [isCreatingProject, setIsCreatingProject] = useState(false)
@@ -397,6 +399,27 @@ function App() {
     }
   }
 
+  const handleInstallSkill = async (file: File, replaceExisting: boolean) => {
+    const installed = await apiClient.installSkill(file, replaceExisting)
+    setWorkspace((current) => current ? {
+      ...current,
+      skills: [...current.skills.filter((skill) => skill.id !== installed.id), installed],
+    } : current)
+    setSkillId(installed.id)
+    setNotice(`Skill“${installed.name}”已安装并选中。`)
+  }
+
+  const handleDeleteSkill = async (skill: SkillOption) => {
+    await apiClient.deleteSkill(skill.id)
+    const fallbackSkillId = workspace?.skills.find((item) => item.id !== skill.id)?.id ?? ''
+    setWorkspace((current) => current ? {
+      ...current,
+      skills: current.skills.filter((item) => item.id !== skill.id),
+    } : current)
+    if (skillId === skill.id) setSkillId(fallbackSkillId)
+    setNotice(`本地 Skill“${skill.name}”已删除。`)
+  }
+
   const applyTerminologyToCurrentWork = (sourceValue: string, normalizedValue: string) => {
     const transcriptResult = replaceTerminologyInText(transcript, sourceValue, normalizedValue)
     if (transcriptResult.count > 0) setTranscript(transcriptResult.text)
@@ -596,6 +619,9 @@ function App() {
                 onChange={setSkillId}
                 renderLabel={(skill) => `${skill.name} · v${skill.version}`}
               />
+              <button type="button" className="skill-manage-button" disabled={isGenerating} onClick={() => setShowSkillManager(true)}>
+                <Icon name="settings" /> 管理与安装 Skill
+              </button>
               <SelectField
                 label="写作模型"
                 value={modelId}
@@ -745,6 +771,14 @@ function App() {
           </aside>
         </div>
       </main>
+      {showSkillManager && (
+        <SkillManagerDialog
+          skills={workspace.skills}
+          onInstall={handleInstallSkill}
+          onDelete={handleDeleteSkill}
+          onClose={() => setShowSkillManager(false)}
+        />
+      )}
     </div>
   )
 }

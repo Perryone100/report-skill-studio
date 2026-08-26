@@ -37,6 +37,8 @@ export interface SkillOption {
   name: string
   version: string
   description: string
+  source: 'bundled' | 'user'
+  canDelete: boolean
 }
 
 export interface ModelOption {

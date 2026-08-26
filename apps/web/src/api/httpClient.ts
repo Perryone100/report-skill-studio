@@ -54,6 +54,8 @@ interface ApiSkill {
   version: string
   description: string
   locale: string
+  source: 'bundled' | 'user'
+  can_delete: boolean
 }
 
 interface ApiJob {
@@ -150,6 +152,8 @@ function mapSkill(skill: ApiSkill): SkillOption {
     name: skill.name,
     version: skill.version,
     description: skill.description,
+    source: skill.source,
+    canDelete: skill.can_delete,
   }
 }
 
@@ -316,6 +320,23 @@ export function createHttpApiClient(
         body: JSON.stringify({ name: input.name, description: input.description }),
       }, signal)
       return mapProject(project)
+    },
+
+    async installSkill(file, replaceExisting, signal) {
+      const installed = await requestJson<ApiSkill>(
+        `/skills/install?replace=${replaceExisting ? 'true' : 'false'}`,
+        {
+          method: 'POST',
+          body: file,
+          headers: { 'Content-Type': 'application/zip' },
+        },
+        signal,
+      )
+      return mapSkill(installed)
+    },
+
+    async deleteSkill(skillId, signal) {
+      await requestVoid(`/skills/${encodeURIComponent(skillId)}`, { method: 'DELETE' }, signal)
     },
 
     async listTerminologyMemory(projectId, signal) {

@@ -3,7 +3,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from functools import lru_cache
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from report_renderer import PdfRenderingUnavailableError, ReportRendererError
@@ -65,7 +65,8 @@ def build_provider_registry(settings: Settings) -> ProviderRegistry:
 
 @lru_cache
 def get_skill_registry() -> SkillRegistry:
-    return SkillRegistry(get_settings().skills_dir)
+    settings = get_settings()
+    return SkillRegistry(settings.skills_dir, settings.user_skills_dir)
 
 
 def get_generation_service(
@@ -275,6 +276,50 @@ def create_app() -> FastAPI:
             return skills.list()
         except SkillLoadError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    @app.post("/api/skills/install", response_model=SkillInfo, status_code=201)
+    async def install_skill(
+        request: Request,
+        replace: bool = Query(default=False),
+        skills: SkillRegistry = Depends(get_skill_registry),
+        store: SQLiteStore = Depends(get_store),
+    ) -> SkillInfo:
+        content_length = request.headers.get("content-length")
+        try:
+            declared_size = int(content_length) if content_length else None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid Content-Length header") from exc
+        if declared_size is not None and declared_size > SkillRegistry.MAX_ARCHIVE_BYTES:
+            raise HTTPException(status_code=413, detail="Skill ZIP exceeds the 8 MB upload limit")
+        try:
+            return skills.install_archive(
+                await request.body(),
+                replace_existing=replace,
+                protected_skill_ids={report.skill_id for report in store.list_reports()},
+            )
+        except FileExistsError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (SkillLoadError, ReportRendererError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.delete("/api/skills/{skill_id}", status_code=204)
+    def delete_skill(
+        skill_id: str,
+        skills: SkillRegistry = Depends(get_skill_registry),
+        store: SQLiteStore = Depends(get_store),
+    ) -> Response:
+        if any(report.skill_id == skill_id for report in store.list_reports()):
+            raise HTTPException(
+                status_code=409,
+                detail="Skill is used by saved reports and cannot be deleted",
+            )
+        try:
+            skills.delete_user_skill(skill_id)
+        except SkillLoadError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return Response(status_code=204)
 
     @app.get("/api/memory/terms", response_model=list[TerminologyMemory])
     def list_terminology_memory(

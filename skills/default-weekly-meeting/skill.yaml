@@ -1,8 +1,8 @@
 schema_version: "0.1"
 id: default-weekly-meeting
 name: 通用周会纪要
-version: 0.2.1
-description: 将会议逐字稿整理成按工作维度归类、可核验、适合团队复盘的结构化周会纪要。
+version: 0.3.1
+description: 将会议逐字稿整理成含重点项目详解、按工作项合并、事实可核验的结构化周会纪要。
 locale: zh-CN
 files:
   instructions: instructions.md

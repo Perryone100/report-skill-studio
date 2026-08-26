@@ -9,12 +9,30 @@
   ],
   "sections": [
     {
-      "id": "overall_conclusion",
-      "title": "本周整体结论",
+      "id": "key_project_details",
+      "title": "本周重点项目",
       "blocks": [
         {
-          "type": "paragraph",
-          "text": "模块 A 已完成灰度发布；当前工作重点转向模块 B 联调和平台统计口径核对。"
+          "type": "status_cards",
+          "cards": [
+            {
+              "title": "功能模块 A",
+              "status": "已完成",
+              "details": [
+                "本周完成灰度发布，回归检查通过。",
+                "下一节点为观察关键指标并确认灰度稳定性。"
+              ]
+            },
+            {
+              "title": "功能模块 B",
+              "status": "进行中",
+              "details": [
+                "接口联调完成 50%。",
+                "当前依赖协作团队补充测试数据，可能影响下周联调进度。",
+                "下一步需明确测试数据交付时间并继续联调。"
+              ]
+            }
+          ]
         }
       ]
     },

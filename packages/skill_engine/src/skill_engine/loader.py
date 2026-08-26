@@ -11,6 +11,7 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 from pydantic import BaseModel, ValidationError
 
+from .compatibility import ensure_workbench_compatible
 from .models import LoadedSkill, SkillManifest, Terminology, ValidationRules
 
 
@@ -89,12 +90,18 @@ def load_skill(directory: str | Path) -> LoadedSkill:
     manifest = _typed_yaml(manifest_path, SkillManifest)
     files = manifest.files
 
+    report_schema = _read_schema(root, files.report_schema)
+    try:
+        ensure_workbench_compatible(report_schema)
+    except ValueError as exc:
+        raise SkillLoadError(f"Report schema is not workbench-compatible: {exc}") from exc
+
     return LoadedSkill(
         root=root,
         manifest=manifest,
         instructions=_read_text(root, files.instructions),
         prompt=_read_text(root, files.prompt),
-        report_schema=_read_schema(root, files.report_schema),
+        report_schema=report_schema,
         terminology=_typed_yaml(_resolve_file(root, files.terms), Terminology),
         validation_rules=_typed_yaml(
             _resolve_file(root, files.validation), ValidationRules

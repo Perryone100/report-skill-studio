@@ -17,6 +17,11 @@ def default_skill() -> LoadedSkill:
     return load_skill(DEFAULT_SKILL_ROOT)
 
 
+@pytest.fixture(scope="session")
+def default_skill_directory() -> Path:
+    return DEFAULT_SKILL_ROOT
+
+
 @pytest.fixture()
 def valid_report() -> dict[str, object]:
     path = DEFAULT_SKILL_ROOT / "examples" / "expected.json"

@@ -82,7 +82,8 @@ def test_renders_required_business_modules(report: dict) -> None:
     html = render_html(report, TEMPLATE_DIR)
 
     assert "产品研发周会纪要" in html
-    assert "本周整体结论" in html
+    assert "执行摘要" in html
+    assert "本周整体结论" not in html
     assert "重点需求进入联调" in html
     assert "<table>" in html
     assert "本周工作进展" in html
