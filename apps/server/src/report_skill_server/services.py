@@ -21,6 +21,7 @@ from skill_engine import (
     normalize_transcript,
 )
 
+from .local_library import LocalMarkdownLibrary, safe_path_component
 from .models import Job, JobStatus, ProviderInfo, Report, SkillInfo
 from .providers import ChatProvider, ProviderGenerationError
 from .storage import SQLiteStore
@@ -29,6 +30,8 @@ from .storage import SQLiteStore
 class ProviderRegistry:
     def __init__(self, providers: list[ChatProvider]):
         self._providers = {provider.id: provider for provider in providers}
+        if len(self._providers) != len(providers):
+            raise ValueError("provider ids must be unique")
 
     def get(self, provider_id: str) -> ChatProvider:
         try:
@@ -278,11 +281,13 @@ class ReportGenerationService:
         providers: ProviderRegistry,
         skills: SkillRegistry,
         artifacts_dir: Path,
+        local_library: LocalMarkdownLibrary,
     ):
         self.store = store
         self.providers = providers
         self.skills = skills
         self.artifacts_dir = artifacts_dir
+        self.local_library = local_library
 
     def generate(self, report_id: str, provider_id: str) -> Job:
         report = self.store.get_report(report_id)
@@ -324,6 +329,7 @@ class ReportGenerationService:
                 content=content,
                 reason=f"generated:{provider_id}",
             )
+            markdown_sync = self.local_library.sync(updated.id)
             return self.store.update_job(
                 job.id,
                 status=JobStatus.SUCCEEDED,
@@ -342,6 +348,7 @@ class ReportGenerationService:
                             for issue in validation.issues
                         ],
                     },
+                    "markdown": markdown_sync.model_dump(mode="json"),
                 },
             )
         except Exception as exc:
@@ -369,7 +376,9 @@ class ReportGenerationService:
         validation = self.validate(report_id)
         if not validation["valid"]:
             raise ValueError("report has validation errors and cannot be confirmed")
-        return self.store.confirm_report(report_id)
+        self.store.confirm_report(report_id)
+        self.local_library.sync(report_id)
+        return self.store.get_report(report_id)
 
     def preview_html(self, report_id: str) -> str:
         report = self.store.get_report(report_id)
@@ -399,6 +408,30 @@ class ReportGenerationService:
             html_filename=html_filename,
             css_filename=css_filename,
         )
+
+    def export_html(self, report_id: str) -> tuple[str, str]:
+        report = self.store.get_report(report_id)
+        if report.status.value != "confirmed":
+            raise ValueError("report must be confirmed before HTML export")
+        skill = self.skills.get(report.skill_id)
+        template_root, html_filename, css_filename = self._template_files(skill)
+        html = render_html(
+            report.content,
+            template_root,
+            html_filename=html_filename,
+            css_filename=css_filename,
+        )
+        return html, self.download_filename(report, "html")
+
+    @staticmethod
+    def download_filename(report: Report, extension: str) -> str:
+        meeting_date = str(report.content.get("meeting_date") or report.updated_at.date().isoformat())
+        title = str(report.content.get("title") or report.title)
+        stem = safe_path_component(f"{meeting_date} {title}", fallback=report.id, max_length=140)
+        return f"{stem}.{extension}"
+
+    def download_filename_for(self, report_id: str, extension: str) -> str:
+        return self.download_filename(self.store.get_report(report_id), extension)
 
     @staticmethod
     def _template_files(skill: LoadedSkill) -> tuple[Path, str, str]:

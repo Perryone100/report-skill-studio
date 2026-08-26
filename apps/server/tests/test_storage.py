@@ -109,6 +109,51 @@ def test_autosave_persists_working_copy_without_creating_versions(
     assert [version.version for version in store.list_report_versions(report.id)] == [1]
 
 
+def test_report_list_keeps_creation_order_after_an_older_report_is_saved(
+    store: SQLiteStore,
+) -> None:
+    project = store.create_project("项目")
+    older = store.create_report(
+        project_id=project.id,
+        title="较早报告",
+        transcript="较早逐字稿",
+        skill_id="default-weekly-meeting",
+    )
+    newer = store.create_report(
+        project_id=project.id,
+        title="较新报告",
+        transcript="较新逐字稿",
+        skill_id="default-weekly-meeting",
+    )
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE reports SET generated_at = ? WHERE id = ?",
+            ("2026-08-20T10:00:00+00:00", older.id),
+        )
+        connection.execute(
+            "UPDATE reports SET generated_at = ? WHERE id = ?",
+            ("2026-08-21T10:00:00+00:00", newer.id),
+        )
+
+    store.save_report_draft(
+        older.id,
+        title=older.title,
+        transcript="点击或保存后的旧报告",
+        content={"title": older.title},
+    )
+
+    assert [report.id for report in store.list_reports(project.id)] == [newer.id, older.id]
+
+    regenerated = store.update_report(
+        older.id,
+        content={"title": older.title, "executive_summary": "重新生成"},
+        reason="generated:mock",
+    )
+
+    assert regenerated.generated_at > newer.generated_at
+    assert [report.id for report in store.list_reports(project.id)] == [older.id, newer.id]
+
+
 def test_restoring_confirmed_version_creates_new_draft(store: SQLiteStore) -> None:
     project = store.create_project("项目")
     report = store.create_report(

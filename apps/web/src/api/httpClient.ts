@@ -2,9 +2,12 @@ import { ApiError, type WorkbenchApi } from './client'
 import type {
   CreateProjectInput,
   ExportArtifact,
+  ExportFormat,
   GenerateReportInput,
   IssueSeverity,
   LoadedReport,
+  LocalLibraryInfo,
+  MarkdownSyncResult,
   ModelOption,
   ProjectSummary,
   ReportContent,
@@ -36,6 +39,7 @@ interface ApiReport {
   content: ReportContent | Record<string, never>
   status: 'draft' | 'confirmed'
   version: number
+  generated_at: string
   created_at: string
   updated_at: string
 }
@@ -99,6 +103,22 @@ interface ApiValidationResult {
   issues: ApiValidationIssue[]
 }
 
+interface ApiLocalLibrary {
+  root_path: string
+  configured: boolean
+  exists: boolean
+  writable: boolean
+}
+
+interface ApiMarkdownSync {
+  status: MarkdownSyncResult['status']
+  root_path: string
+  relative_path: string | null
+  file_path: string | null
+  message: string
+  synced_at: string | null
+}
+
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
 
 const issueTitles: Record<string, string> = {
@@ -142,6 +162,7 @@ function mapReportSummary(report: ApiReport): ReportSummary {
     title: report.title,
     period: meetingDate || report.created_at.slice(0, 10),
     status: report.status,
+    generatedAt: report.generated_at,
     updatedAt: report.updated_at,
   }
 }
@@ -225,6 +246,26 @@ function mapValidation(result: ApiValidationResult): ValidationIssue[] {
   }))
 }
 
+function mapLocalLibrary(info: ApiLocalLibrary): LocalLibraryInfo {
+  return {
+    rootPath: info.root_path,
+    configured: info.configured,
+    exists: info.exists,
+    writable: info.writable,
+  }
+}
+
+function mapMarkdownSync(sync: ApiMarkdownSync): MarkdownSyncResult {
+  return {
+    status: sync.status,
+    rootPath: sync.root_path,
+    relativePath: sync.relative_path ?? undefined,
+    filePath: sync.file_path ?? undefined,
+    message: sync.message,
+    syncedAt: sync.synced_at ?? undefined,
+  }
+}
+
 /** Remove UI-only fields before sending canonical report content to the server. */
 export function stripReportMetadata(report: ReportDraft): ReportContent {
   const { reportId: _reportId, ...content } = report
@@ -291,6 +332,7 @@ export function createHttpApiClient(
       skillId: report.skill_id,
       status: report.status,
       version: report.version,
+      generatedAt: report.generated_at,
       updatedAt: report.updated_at,
       draft: hasReportContent(report) ? mapDraft(report) : null,
       issues: hasReportContent(report) ? mapValidation(validation) : [],
@@ -314,12 +356,55 @@ export function createHttpApiClient(
       }
     },
 
+    async getLocalLibrary(signal) {
+      const info = await requestJson<ApiLocalLibrary>('/local-library', {}, signal)
+      return mapLocalLibrary(info)
+    },
+
+    async configureLocalLibrary(rootPath, signal) {
+      const info = await requestJson<ApiLocalLibrary>('/local-library', {
+        method: 'PUT',
+        body: JSON.stringify({ root_path: rootPath }),
+      }, signal)
+      return mapLocalLibrary(info)
+    },
+
     async createProject(input: CreateProjectInput, signal) {
       const project = await requestJson<ApiProject>('/projects', {
         method: 'POST',
         body: JSON.stringify({ name: input.name, description: input.description }),
       }, signal)
       return mapProject(project)
+    },
+
+    async exportProjectBackup(projectId, signal) {
+      let response: Response
+      try {
+        response = await fetchImpl(
+          `${apiBaseUrl}/projects/${encodeURIComponent(projectId)}/backup`,
+          { signal },
+        )
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') throw error
+        throw new ApiError('无法连接本地服务，请确认 FastAPI 已启动。', 'NETWORK_ERROR')
+      }
+      if (!response.ok) throw new ApiError(await errorMessage(response), `HTTP_${response.status}`)
+      const disposition = response.headers.get('content-disposition') ?? ''
+      const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
+      const plainName = disposition.match(/filename="?([^";]+)"?/i)?.[1]
+      return {
+        blob: await response.blob(),
+        fileName: encodedName ? decodeURIComponent(encodedName) : plainName || 'project-backup.zip',
+        mock: false,
+      }
+    },
+
+    async clearProjectReports(projectId, signal) {
+      await requestVoid(`/projects/${encodeURIComponent(projectId)}/reports`, { method: 'DELETE' }, signal)
+    },
+
+    async deleteProject(projectId, signal) {
+      await requestVoid(`/projects/${encodeURIComponent(projectId)}`, { method: 'DELETE' }, signal)
     },
 
     async installSkill(file, replaceExisting, signal) {
@@ -380,7 +465,7 @@ export function createHttpApiClient(
           content: stripReportMetadata(report),
         }),
       }, signal)
-      return { updatedAt: saved.updated_at, version: saved.version }
+      return { updatedAt: saved.updated_at, version: saved.version, report: mapDraft(saved) }
     },
 
     async restoreReportVersion(reportId, version, signal) {
@@ -390,6 +475,24 @@ export function createHttpApiClient(
         signal,
       )
       return loadReportBundle(report, signal)
+    },
+
+    async getReportMarkdownStatus(reportId, signal) {
+      const sync = await requestJson<ApiMarkdownSync>(
+        `/reports/${encodeURIComponent(reportId)}/markdown`,
+        {},
+        signal,
+      )
+      return mapMarkdownSync(sync)
+    },
+
+    async syncReportMarkdown(reportId, signal) {
+      const sync = await requestJson<ApiMarkdownSync>(
+        `/reports/${encodeURIComponent(reportId)}/markdown/sync`,
+        { method: 'POST' },
+        signal,
+      )
+      return mapMarkdownSync(sync)
     },
 
     async generateReport(input: GenerateReportInput, signal): Promise<ReportOperationResult> {
@@ -436,10 +539,13 @@ export function createHttpApiClient(
       return { report: mapDraft(confirmedReport), issues, confirmed: true }
     },
 
-    async exportReport(report: ReportDraft, signal): Promise<ExportArtifact> {
+    async exportReport(report: ReportDraft, format: ExportFormat, signal): Promise<ExportArtifact> {
       let response: Response
       try {
-        response = await fetchImpl(`${apiBaseUrl}/reports/${report.reportId}/export`, {
+        const path = format === 'pdf'
+          ? `/reports/${report.reportId}/export`
+          : `/reports/${report.reportId}/export/html`
+        response = await fetchImpl(`${apiBaseUrl}${path}`, {
           method: 'POST',
           signal,
         })
@@ -455,7 +561,7 @@ export function createHttpApiClient(
       const plainName = disposition.match(/filename="?([^";]+)"?/i)?.[1]
       const fileName = encodedName
         ? decodeURIComponent(encodedName)
-        : plainName || `${report.title}.pdf`
+        : plainName || `${report.title}.${format}`
       return { blob: await response.blob(), fileName, mock: false }
     },
   }

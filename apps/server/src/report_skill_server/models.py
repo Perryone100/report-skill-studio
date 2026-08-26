@@ -76,6 +76,7 @@ class Report(BaseModel):
     content: dict[str, Any]
     status: ReportStatus
     version: int
+    generated_at: datetime
     created_at: datetime
     updated_at: datetime
 
@@ -123,6 +124,26 @@ class SkillInfo(BaseModel):
     locale: str
     source: Literal["bundled", "user"] = "bundled"
     can_delete: bool = False
+
+
+class LocalLibraryUpdate(BaseModel):
+    root_path: str = Field(min_length=1, max_length=2000)
+
+
+class LocalLibraryInfo(BaseModel):
+    root_path: str
+    configured: bool
+    exists: bool
+    writable: bool
+
+
+class MarkdownSyncResult(BaseModel):
+    status: Literal["synced", "unsynced", "conflict", "missing", "no_content", "error"]
+    root_path: str
+    relative_path: str | None = None
+    file_path: str | None = None
+    message: str
+    synced_at: datetime | None = None
 
 
 class TerminologyMemoryCreate(BaseModel):

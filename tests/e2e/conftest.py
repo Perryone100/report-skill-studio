@@ -14,6 +14,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClie
     repository_root = Path(__file__).resolve().parents[2]
     monkeypatch.setenv("RSS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("RSS_SKILLS_DIR", str(repository_root / "skills"))
+    monkeypatch.setenv("RSS_PROJECTS_DIR", str(tmp_path / "markdown-library"))
 
     from report_skill_server.config import get_settings
     from report_skill_server.main import (

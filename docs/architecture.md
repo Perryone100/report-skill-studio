@@ -4,7 +4,7 @@ Report Skill Studio uses a ports-and-adapters architecture so model vendors, tra
 
 ## Critical path
 
-`source -> transcript -> Skill + memory -> structured draft -> validation -> review -> confirmed report -> renderer -> artifact`
+`source -> transcript -> Skill + memory -> structured draft -> Markdown sync -> validation -> review -> confirmed report -> HTML/PDF download`
 
 ## Package contracts
 
@@ -12,6 +12,7 @@ Report Skill Studio uses a ports-and-adapters architecture so model vendors, tra
 - The application service asks a chat provider for JSON conforming to the selected Skill schema.
 - Validation is deterministic and runs before and after user review.
 - The renderer accepts only validated structured report data and a trusted declarative template.
+- The local Markdown library projects canonical report blocks into plain `.md` files; SQLite remains the authoritative structured working state.
 - Long-running generation, transcription, and rendering operations use persisted jobs with explicit status.
 
 ## Model boundary and cost control
@@ -21,6 +22,12 @@ structured drafting. Transcript terminology normalization, applying a
 confirmed correction to the current draft, validation, review state, and
 HTML/PDF rendering remain deterministic local operations and do not trigger
 another model request.
+
+Markdown sync also remains deterministic and local. Project folder and report
+filename assignments are persisted separately from the Markdown files so the
+project folders contain only readable `.md` documents. Before overwriting a
+known file, the service compares its last synchronized hash and pauses on an
+external edit instead of silently discarding user changes.
 
 Before generation, project terminology is applied locally. The model prompt
 then includes only terminology entries relevant to the current normalized

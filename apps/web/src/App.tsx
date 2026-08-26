@@ -3,7 +3,10 @@ import { ApiError } from './api/client'
 import {
   apiClient,
   apiMode,
+  type ExportFormat,
+  type LocalLibraryInfo,
   type ModelOption,
+  type MarkdownSyncResult,
   type LoadedReport,
   type ReportDraft,
   type ReportSummary,
@@ -14,6 +17,8 @@ import {
   type WorkspaceBootstrap,
 } from './api'
 import { Icon } from './components/Icons'
+import { LocalLibraryDialog } from './components/LocalLibraryDialog'
+import { PrivacyDataDialog } from './components/PrivacyDataDialog'
 import { ReportEditor } from './components/ReportEditor'
 import { Sidebar } from './components/Sidebar'
 import { SkillManagerDialog } from './components/SkillManagerDialog'
@@ -87,12 +92,16 @@ function App() {
   const [confirmed, setConfirmed] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
   const [isConfirming, setIsConfirming] = useState(false)
-  const [isExporting, setIsExporting] = useState(false)
+  const [isExporting, setIsExporting] = useState<ExportFormat | null>(null)
   const [actionError, setActionError] = useState('')
   const [notice, setNotice] = useState('')
   const [serverIssues, setServerIssues] = useState<ValidationIssue[]>([])
   const [showProjectCreator, setShowProjectCreator] = useState(false)
   const [showSkillManager, setShowSkillManager] = useState(false)
+  const [showLibrarySettings, setShowLibrarySettings] = useState(false)
+  const [showPrivacyData, setShowPrivacyData] = useState(false)
+  const [localLibrary, setLocalLibrary] = useState<LocalLibraryInfo | null>(null)
+  const [markdownSync, setMarkdownSync] = useState<MarkdownSyncResult | null>(null)
   const [projectName, setProjectName] = useState('')
   const [projectDescription, setProjectDescription] = useState('')
   const [isCreatingProject, setIsCreatingProject] = useState(false)
@@ -107,6 +116,7 @@ function App() {
   const [dismissedSuggestionIds, setDismissedSuggestionIds] = useState<string[]>([])
   const lastSavedSignature = useRef('')
   const saveSequence = useRef(0)
+  const activeReportId = useRef('')
 
   const draftSignature = (nextDraft: ReportDraft, nextTranscript: string) => JSON.stringify({
     transcript: nextTranscript,
@@ -120,13 +130,20 @@ function App() {
       title: loaded.title,
       period: loaded.draft?.meeting_date || loaded.updatedAt.slice(0, 10),
       status: loaded.status,
+      generatedAt: loaded.generatedAt,
       updatedAt: loaded.updatedAt,
     }
     setWorkspace((current) => {
       if (!current) return current
+      const existingIndex = current.reports.findIndex((report) => report.id === summary.id)
+      if (existingIndex >= 0) {
+        const reports = [...current.reports]
+        reports[existingIndex] = summary
+        return { ...current, reports }
+      }
       return {
         ...current,
-        reports: [summary, ...current.reports.filter((report) => report.id !== summary.id)],
+        reports: [summary, ...current.reports],
       }
     })
   }
@@ -148,6 +165,15 @@ function App() {
     setDismissedSuggestionIds([])
     lastSavedSignature.current = loaded.draft ? draftSignature(loaded.draft, loaded.transcript) : ''
     setAutosaveStatus(loaded.draft ? 'saved' : 'idle')
+    activeReportId.current = loaded.reportId
+    setMarkdownSync(null)
+    void apiClient.getReportMarkdownStatus(loaded.reportId)
+      .then((sync) => {
+        if (activeReportId.current === loaded.reportId) setMarkdownSync(sync)
+      })
+      .catch(() => {
+        if (activeReportId.current === loaded.reportId) setMarkdownSync(null)
+      })
     upsertReportSummary(loaded)
   }
 
@@ -155,8 +181,12 @@ function App() {
     setLoadState('loading')
     setLoadError('')
     try {
-      const result = await apiClient.getWorkspace()
+      const [result, library] = await Promise.all([
+        apiClient.getWorkspace(),
+        apiClient.getLocalLibrary(),
+      ])
       setWorkspace(result)
+      setLocalLibrary(library)
       setProjectId((current) => current || result.projects[0]?.id || '')
       setSkillId((current) => current || result.skills[0]?.id || '')
       setModelId((current) => current || result.models.find((model) => model.ready)?.id || '')
@@ -204,15 +234,21 @@ function App() {
       void apiClient.saveReportDraft(draft, transcript, controller.signal)
         .then((saved) => {
           if (sequence !== saveSequence.current) return
-          lastSavedSignature.current = signature
+          lastSavedSignature.current = draftSignature(saved.report, transcript)
+          setDraft(saved.report)
           setCurrentReportVersion(saved.version)
           setAutosaveStatus('saved')
+          void apiClient.getReportMarkdownStatus(draft.reportId)
+            .then((sync) => {
+              if (activeReportId.current === draft.reportId) setMarkdownSync(sync)
+            })
+            .catch(() => undefined)
           setWorkspace((current) => current ? {
             ...current,
             reports: current.reports.map((report) => report.id === draft.reportId ? {
               ...report,
-              title: draft.title,
-              period: draft.meeting_date,
+              title: saved.report.title,
+              period: saved.report.meeting_date,
               updatedAt: saved.updatedAt,
             } : report),
           } : current)
@@ -274,6 +310,12 @@ function App() {
 
   const handleGenerate = async () => {
     if (!workflow.canGenerate) return
+    if (selectedModel?.locality === 'cloud') {
+      const approved = window.confirm(
+        `将向“${selectedModel.provider} / ${selectedModel.name}”发送当前逐字稿、Skill 规则、报告 Schema 和相关项目专词。\n\n是否继续生成？`,
+      )
+      if (!approved) return
+    }
     setIsGenerating(true)
     setActionError('')
     setNotice('')
@@ -321,12 +363,12 @@ function App() {
     }
   }
 
-  const handleExport = async () => {
-    if (!draft || !workflow.canExport) return
-    setIsExporting(true)
+  const handleExport = async (format: ExportFormat) => {
+    if (!draft || !workflow.canExport || isExporting) return
+    setIsExporting(format)
     setActionError('')
     try {
-      const artifact = await apiClient.exportReport(draft)
+      const artifact = await apiClient.exportReport(draft, format)
       const url = URL.createObjectURL(artifact.blob)
       const anchor = document.createElement('a')
       anchor.href = url
@@ -335,14 +377,91 @@ function App() {
       URL.revokeObjectURL(url)
       setNotice(
         artifact.mock
-          ? 'Mock 阶段已导出 HTML 数据预览；接入渲染服务后将直接生成 PDF。'
-          : 'PDF 已导出。',
+          ? 'Mock 阶段已下载 HTML 数据预览。'
+          : `${format.toUpperCase()} 已下载。`,
       )
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : '导出失败。')
+      setActionError(error instanceof Error ? error.message : `${format.toUpperCase()} 导出失败。`)
     } finally {
-      setIsExporting(false)
+      setIsExporting(null)
     }
+  }
+
+  const handleConfigureLocalLibrary = async (rootPath: string) => {
+    const configured = await apiClient.configureLocalLibrary(rootPath)
+    setLocalLibrary(configured)
+    if (draft) {
+      const sync = await apiClient.syncReportMarkdown(draft.reportId)
+      setMarkdownSync(sync)
+    }
+    setShowLibrarySettings(false)
+    setNotice('本地项目库位置已保存，Markdown 报告会自动同步。')
+  }
+
+  const handleSyncMarkdown = async () => {
+    if (!draft) return
+    setActionError('')
+    try {
+      const sync = await apiClient.syncReportMarkdown(draft.reportId)
+      setMarkdownSync(sync)
+      setNotice(sync.message)
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Markdown 同步失败。')
+    }
+  }
+
+  const resetActiveReport = () => {
+    setDraft(null)
+    setTranscript('')
+    setConfirmed(false)
+    setServerIssues([])
+    setVersions([])
+    setCurrentReportVersion(null)
+    setLearningBaseline(null)
+    setDismissedSuggestionIds([])
+    lastSavedSignature.current = ''
+    setAutosaveStatus('idle')
+    activeReportId.current = ''
+    setMarkdownSync(null)
+  }
+
+  const handleExportProjectBackup = async () => {
+    if (!projectId) return
+    const artifact = await apiClient.exportProjectBackup(projectId)
+    const url = URL.createObjectURL(artifact.blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = artifact.fileName
+    anchor.click()
+    URL.revokeObjectURL(url)
+    setNotice('项目备份已下载，其中不包含模型 API 密钥。')
+  }
+
+  const handleClearProjectReports = async () => {
+    if (!projectId) return
+    await apiClient.clearProjectReports(projectId)
+    setWorkspace((current) => current ? {
+      ...current,
+      reports: current.reports.filter((report) => report.projectId !== projectId),
+    } : current)
+    resetActiveReport()
+    setNotice('已清空当前项目的报告历史和未被外部修改的 Markdown。')
+  }
+
+  const handleDeleteCurrentProject = async () => {
+    if (!projectId) return
+    await apiClient.deleteProject(projectId)
+    const remainingProjects = workspace?.projects.filter((project) => project.id !== projectId) ?? []
+    setWorkspace((current) => current ? {
+      ...current,
+      projects: current.projects.filter((project) => project.id !== projectId),
+      reports: current.reports.filter((report) => report.projectId !== projectId),
+    } : current)
+    resetActiveReport()
+    setProjectId(remainingProjects[0]?.id ?? '')
+    setShowPrivacyData(false)
+    setShowProjectCreator(remainingProjects.length === 0)
+    setNotice('项目及其本地数据已删除。')
   }
 
   const handleSelectReport = async (report: ReportSummary) => {
@@ -501,6 +620,8 @@ function App() {
         activeProjectId={projectId}
         activeReportId={draft?.reportId}
         onCreateProject={() => setShowProjectCreator(true)}
+        onOpenSettings={() => setShowLibrarySettings(true)}
+        onOpenPrivacy={() => setShowPrivacyData(true)}
         onSelectProject={(nextProjectId) => {
           setProjectId(nextProjectId)
           setDraft(null)
@@ -512,6 +633,8 @@ function App() {
           setDismissedSuggestionIds([])
           lastSavedSignature.current = ''
           setAutosaveStatus('idle')
+          activeReportId.current = ''
+          setMarkdownSync(null)
           setNotice('')
         }}
         onSelectReport={(report) => void handleSelectReport(report)}
@@ -759,12 +882,32 @@ function App() {
                 </button>
                 <button
                   type="button"
-                  className="primary-button"
-                  disabled={!workflow.canExport || isExporting}
-                  onClick={() => void handleExport()}
+                  className="secondary-button"
+                  disabled={!workflow.canExport || Boolean(isExporting)}
+                  onClick={() => void handleExport('html')}
                 >
-                  {isExporting ? <><span className="spinner" /> 正在导出</> : <><Icon name="download" /> 导出 PDF</>}
+                  {isExporting === 'html' ? <><span className="spinner dark" /> 正在导出</> : <><Icon name="download" /> 导出 HTML</>}
                 </button>
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={!workflow.canExport || Boolean(isExporting)}
+                  onClick={() => void handleExport('pdf')}
+                >
+                  {isExporting === 'pdf' ? <><span className="spinner" /> 正在导出</> : <><Icon name="download" /> 导出 PDF</>}
+                </button>
+                {draft && markdownSync && (
+                  <div className={`markdown-sync ${markdownSync.status}`}>
+                    <Icon name={markdownSync.status === 'synced' ? 'check' : 'warning'} />
+                    <div>
+                      <strong>{markdownSync.status === 'synced' ? 'Markdown 已保存' : 'Markdown 需要处理'}</strong>
+                      <p>{markdownSync.relativePath || markdownSync.message}</p>
+                    </div>
+                    {['unsynced', 'missing', 'error'].includes(markdownSync.status) && (
+                      <button type="button" onClick={() => void handleSyncMarkdown()}>重试</button>
+                    )}
+                  </div>
+                )}
                 {draft && !confirmed && <p>只有错误会阻止确认；建议项不影响确认和导出。</p>}
               </div>
             </section>
@@ -777,6 +920,25 @@ function App() {
           onInstall={handleInstallSkill}
           onDelete={handleDeleteSkill}
           onClose={() => setShowSkillManager(false)}
+        />
+      )}
+      {showLibrarySettings && localLibrary && (
+        <LocalLibraryDialog
+          info={localLibrary}
+          onSave={handleConfigureLocalLibrary}
+          onClose={() => setShowLibrarySettings(false)}
+        />
+      )}
+
+      {showPrivacyData && selectedProject && (
+        <PrivacyDataDialog
+          project={selectedProject}
+          reportCount={workspace.reports.filter((report) => report.projectId === selectedProject.id).length}
+          libraryRoot={localLibrary?.rootPath ?? '未配置'}
+          onExportBackup={handleExportProjectBackup}
+          onClearReports={handleClearProjectReports}
+          onDeleteProject={handleDeleteCurrentProject}
+          onClose={() => setShowPrivacyData(false)}
         />
       )}
     </div>

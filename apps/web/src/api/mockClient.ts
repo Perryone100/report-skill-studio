@@ -1,6 +1,7 @@
 import { ApiError, type WorkbenchApi } from './client'
 import type {
   ExportArtifact,
+  ExportFormat,
   GenerateReportInput,
   LoadedReport,
   ReportDraft,
@@ -51,6 +52,7 @@ const bootstrap: WorkspaceBootstrap = {
       title: '产品研发周会纪要',
       period: '2026.08.17—2026.08.21',
       status: 'exported',
+      generatedAt: '2026-08-21T19:00:00+08:00',
       updatedAt: '2026-08-21T19:20:00+08:00',
     },
     {
@@ -59,6 +61,7 @@ const bootstrap: WorkspaceBootstrap = {
       title: '产品研发周会纪要（上期）',
       period: '2026.08.10—2026.08.14',
       status: 'confirmed',
+      generatedAt: '2026-08-14T18:20:00+08:00',
       updatedAt: '2026-08-14T18:42:00+08:00',
     },
   ],
@@ -100,6 +103,28 @@ const terminologyMemory: TerminologyMemoryEntry[] = [
     updatedAt: '2026-08-24T09:30:00+08:00',
   },
 ]
+
+let localLibrary = {
+  rootPath: '/Users/demo/Documents/Report Skill Studio',
+  configured: true,
+  exists: true,
+  writable: true,
+}
+
+function mockMarkdownSync(reportId: string) {
+  const report = ensureMockReport(reportId)
+  const project = bootstrap.projects.find((item) => item.id === report.projectId)
+  const fileName = `${report.draft.meeting_date} ${report.draft.title}.md`.replace(/[\\/:*?"<>|]/g, '-')
+  const relativePath = `${project?.name ?? '未命名项目'}/${fileName}`
+  return {
+    status: 'synced' as const,
+    rootPath: localLibrary.rootPath,
+    relativePath,
+    filePath: `${localLibrary.rootPath}/${relativePath}`,
+    message: 'Markdown 已同步到本地项目文件夹。',
+    syncedAt: new Date().toISOString(),
+  }
+}
 
 function buildDraft(input: GenerateReportInput): ReportDraft {
   const transcriptPreview = input.transcript
@@ -191,6 +216,7 @@ interface MockReportRecord {
   draft: ReportDraft
   status: 'draft' | 'confirmed'
   version: number
+  generatedAt: string
   updatedAt: string
   versions: Array<ReportVersionEntry & { draft: ReportDraft | null }>
 }
@@ -218,6 +244,7 @@ function ensureMockReport(reportId: string): MockReportRecord {
     draft,
     status: summary.status === 'draft' ? 'draft' : 'confirmed',
     version: 2,
+    generatedAt: summary.generatedAt,
     updatedAt,
     versions: [
       { id: `${reportId}-v2`, reportId, version: 2, title: draft.title, reason: 'generated', createdAt: updatedAt, hasContent: true, draft: structuredClone(draft) },
@@ -237,6 +264,7 @@ function loadMockReport(record: MockReportRecord): LoadedReport {
     skillId: record.skillId,
     status: record.status,
     version: record.version,
+    generatedAt: record.generatedAt,
     updatedAt: record.updatedAt,
     draft: structuredClone(record.draft),
     issues: [],
@@ -253,6 +281,18 @@ export const mockApiClient: WorkbenchApi = {
     return structuredClone(bootstrap)
   },
 
+  async getLocalLibrary(signal) {
+    await wait(120, signal)
+    return structuredClone(localLibrary)
+  },
+
+  async configureLocalLibrary(rootPath, signal) {
+    await wait(180, signal)
+    if (!rootPath.startsWith('/')) throw new ApiError('请输入本机绝对路径。', 'HTTP_422')
+    localLibrary = { rootPath, configured: true, exists: true, writable: true }
+    return structuredClone(localLibrary)
+  },
+
   async createProject(input, signal) {
     await wait(300, signal)
     const project = {
@@ -264,6 +304,44 @@ export const mockApiClient: WorkbenchApi = {
     }
     bootstrap.projects.push(project)
     return structuredClone(project)
+  },
+
+  async exportProjectBackup(projectId, signal) {
+    await wait(260, signal)
+    const project = bootstrap.projects.find((item) => item.id === projectId)
+    if (!project) throw new ApiError('没有找到这个项目。', 'HTTP_404')
+    const payload = JSON.stringify({
+      format: 'report-skill-studio-project-backup',
+      project,
+      reports: bootstrap.reports.filter((report) => report.projectId === projectId),
+    }, null, 2)
+    return {
+      blob: new Blob([payload], { type: 'application/zip' }),
+      fileName: `${project.name}-Mock-backup.zip`,
+      mock: true,
+    }
+  },
+
+  async clearProjectReports(projectId, signal) {
+    await wait(240, signal)
+    if (!bootstrap.projects.some((project) => project.id === projectId)) {
+      throw new ApiError('没有找到这个项目。', 'HTTP_404')
+    }
+    for (let index = bootstrap.reports.length - 1; index >= 0; index -= 1) {
+      if (bootstrap.reports[index].projectId !== projectId) continue
+      mockReports.delete(bootstrap.reports[index].id)
+      bootstrap.reports.splice(index, 1)
+    }
+  },
+
+  async deleteProject(projectId, signal) {
+    await this.clearProjectReports(projectId, signal)
+    const projectIndex = bootstrap.projects.findIndex((project) => project.id === projectId)
+    if (projectIndex < 0) throw new ApiError('没有找到这个项目。', 'HTTP_404')
+    bootstrap.projects.splice(projectIndex, 1)
+    for (let index = terminologyMemory.length - 1; index >= 0; index -= 1) {
+      if (terminologyMemory[index].projectId === projectId) terminologyMemory.splice(index, 1)
+    }
   },
 
   async installSkill(file, replaceExisting, signal) {
@@ -345,6 +423,7 @@ export const mockApiClient: WorkbenchApi = {
       draft: report,
       status: 'draft',
       version: 2,
+      generatedAt: now,
       updatedAt: now,
       versions: [
         { id: `${report.reportId}-v2`, reportId: report.reportId, version: 2, title: report.title, reason: 'generated', createdAt: now, hasContent: true, draft: structuredClone(report) },
@@ -358,6 +437,7 @@ export const mockApiClient: WorkbenchApi = {
       title: report.title,
       period: report.meeting_date,
       status: 'draft',
+      generatedAt: now,
       updatedAt: now,
     })
     return { report: structuredClone(report), issues: [], confirmed: false }
@@ -377,7 +457,11 @@ export const mockApiClient: WorkbenchApi = {
     record.updatedAt = new Date().toISOString()
     const summary = bootstrap.reports.find((item) => item.id === report.reportId)
     if (summary) Object.assign(summary, { title: report.title, period: report.meeting_date, updatedAt: record.updatedAt })
-    return { updatedAt: record.updatedAt, version: record.version }
+    return {
+      updatedAt: record.updatedAt,
+      version: record.version,
+      report: structuredClone(record.draft),
+    }
   },
 
   async restoreReportVersion(reportId, version, signal) {
@@ -394,6 +478,7 @@ export const mockApiClient: WorkbenchApi = {
         draft: restoredDraft,
         status: 'draft',
         version: 1,
+        generatedAt: restoredAt,
         updatedAt: restoredAt,
         versions: [{
           id: `${restoredDraft.reportId}-v1`, reportId: restoredDraft.reportId, version: 1,
@@ -402,7 +487,7 @@ export const mockApiClient: WorkbenchApi = {
         }],
       }
       mockReports.set(restoredDraft.reportId, restored)
-      bootstrap.reports.unshift({ id: restoredDraft.reportId, projectId: restored.projectId, title: restoredDraft.title, period: restoredDraft.meeting_date, status: 'draft', updatedAt: restoredAt })
+      bootstrap.reports.unshift({ id: restoredDraft.reportId, projectId: restored.projectId, title: restoredDraft.title, period: restoredDraft.meeting_date, status: 'draft', generatedAt: restoredAt, updatedAt: restoredAt })
       return loadMockReport(restored)
     }
     record.version += 1
@@ -414,6 +499,16 @@ export const mockApiClient: WorkbenchApi = {
       createdAt: restoredAt, hasContent: true, draft: structuredClone(record.draft),
     })
     return loadMockReport(record)
+  },
+
+  async getReportMarkdownStatus(reportId, signal) {
+    await wait(100, signal)
+    return mockMarkdownSync(reportId)
+  },
+
+  async syncReportMarkdown(reportId, signal) {
+    await wait(160, signal)
+    return mockMarkdownSync(reportId)
   },
 
   async confirmReport(report, transcript, signal) {
@@ -434,14 +529,14 @@ export const mockApiClient: WorkbenchApi = {
     return { report: structuredClone(report), issues: [], confirmed: true }
   },
 
-  async exportReport(report, signal): Promise<ExportArtifact> {
+  async exportReport(report, format: ExportFormat, signal): Promise<ExportArtifact> {
     await wait(450, signal)
     const { reportId: _reportId, ...content } = report
     const escaped = JSON.stringify(content, null, 2)
     const html = `<!doctype html><html lang="zh-CN"><meta charset="UTF-8"><title>${report.title}</title><body><pre>${escaped}</pre></body></html>`
     return {
       blob: new Blob([html], { type: 'text/html;charset=utf-8' }),
-      fileName: `${report.title.replace(/[\\/:*?"<>|]/g, '-')}-Mock预览.html`,
+      fileName: `${report.title.replace(/[\\/:*?"<>|]/g, '-')}-Mock预览.${format === 'pdf' ? 'html' : format}`,
       mock: true,
     }
   },

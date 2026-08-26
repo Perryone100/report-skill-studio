@@ -31,6 +31,7 @@ const apiReport = (status: 'draft' | 'confirmed' = 'draft') => ({
   content,
   status,
   version: 2,
+  generated_at: '2026-08-21T10:30:00Z',
   created_at: '2026-08-21T10:00:00Z',
   updated_at: '2026-08-21T11:00:00Z',
 })
@@ -53,7 +54,11 @@ describe('HTTP API client', () => {
     const workspace = await client.getWorkspace()
 
     expect(workspace.projects[0]).toMatchObject({ id: 'project-1', status: 'active' })
-    expect(workspace.reports[0]).toMatchObject({ id: 'report-1', period: '2026-08-21' })
+    expect(workspace.reports[0]).toMatchObject({
+      id: 'report-1',
+      period: '2026-08-21',
+      generatedAt: '2026-08-21T10:30:00Z',
+    })
     expect(workspace.skills[0]).toMatchObject({ id: 'default-weekly-meeting', source: 'bundled', canDelete: false })
     expect(workspace.models[0]).toMatchObject({ id: 'mock', locality: 'local', ready: true })
     expect(workspace.models[1]).toMatchObject({
@@ -62,6 +67,47 @@ describe('HTTP API client', () => {
       provider: 'OpenAI-compatible API',
     })
     expect(fetchMock).toHaveBeenCalledTimes(4)
+  })
+
+  it('配置本地 Markdown 项目库并读取同步状态', async () => {
+    const requests: Array<{ path: string; method: string; body?: unknown }> = []
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname
+      requests.push({
+        path,
+        method: init?.method ?? 'GET',
+        body: init?.body ? JSON.parse(String(init.body)) : undefined,
+      })
+      if (path.endsWith('/markdown/sync') || path.endsWith('/markdown')) {
+        return jsonResponse({
+          status: 'synced', root_path: '/Users/demo/Reports',
+          relative_path: '产品研发/2026-08-21 周会纪要.md',
+          file_path: '/Users/demo/Reports/产品研发/2026-08-21 周会纪要.md',
+          message: '已同步', synced_at: '2026-08-21T11:00:00Z',
+        })
+      }
+      return jsonResponse({
+        root_path: init?.method === 'PUT' ? '/Users/demo/Reports' : '/Users/demo/Documents/Report Skill Studio',
+        configured: init?.method === 'PUT', exists: true, writable: true,
+      })
+    })
+    const client = createHttpApiClient('http://localhost:8000/api', fetchMock as typeof fetch)
+
+    const initial = await client.getLocalLibrary()
+    const configured = await client.configureLocalLibrary('/Users/demo/Reports')
+    const status = await client.getReportMarkdownStatus('report-1')
+    const synced = await client.syncReportMarkdown('report-1')
+
+    expect(initial).toMatchObject({ configured: false, writable: true })
+    expect(configured.rootPath).toBe('/Users/demo/Reports')
+    expect(status).toMatchObject({ status: 'synced', relativePath: '产品研发/2026-08-21 周会纪要.md' })
+    expect(synced.filePath).toContain('/Users/demo/Reports')
+    expect(requests).toEqual([
+      { path: '/api/local-library', method: 'GET', body: undefined },
+      { path: '/api/local-library', method: 'PUT', body: { root_path: '/Users/demo/Reports' } },
+      { path: '/api/reports/report-1/markdown', method: 'GET', body: undefined },
+      { path: '/api/reports/report-1/markdown/sync', method: 'POST', body: undefined },
+    ])
   })
 
   it('按 create → generate → fetch → validation 组合生成流程', async () => {
@@ -120,6 +166,36 @@ describe('HTTP API client', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
+  it('导出项目备份并提供清空和删除操作', async () => {
+    const requests: string[] = []
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname
+      requests.push(`${init?.method ?? 'GET'} ${path}`)
+      if (path.endsWith('/backup')) {
+        return new Response('zip-content', {
+          headers: {
+            'Content-Type': 'application/zip',
+            'Content-Disposition': "attachment; filename=project-backup.zip; filename*=UTF-8''%E6%BC%94%E7%A4%BA-backup.zip",
+          },
+        })
+      }
+      return new Response(null, { status: 204 })
+    })
+    const client = createHttpApiClient('http://localhost:8000/api', fetchMock as typeof fetch)
+
+    const backup = await client.exportProjectBackup('project-1')
+    await client.clearProjectReports('project-1')
+    await client.deleteProject('project-1')
+
+    expect(backup.fileName).toBe('演示-backup.zip')
+    expect(await backup.blob.text()).toBe('zip-content')
+    expect(requests).toEqual([
+      'GET /api/projects/project-1/backup',
+      'DELETE /api/projects/project-1/reports',
+      'DELETE /api/projects/project-1',
+    ])
+  })
+
   it('加载历史详情、自动保存工作副本并恢复版本', async () => {
     const requests: Array<{ path: string; method: string; body?: Record<string, unknown> }> = []
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -155,6 +231,7 @@ describe('HTTP API client', () => {
     expect(loaded).toMatchObject({ reportId: 'report-1', version: 2, status: 'draft' })
     expect(loaded.versions.map((version) => version.hasContent)).toEqual([true, false])
     expect(saveResult.version).toBe(2)
+    expect(saveResult.report).toMatchObject({ reportId: 'report-1', title: content.title })
     expect(restored.draft?.reportId).toBe('report-1')
     const autosave = requests.find((request) => request.path.endsWith('/draft'))
     expect(autosave?.body?.transcript).toBe('修改后的逐字稿')
@@ -253,5 +330,33 @@ describe('HTTP API client', () => {
     expect(patchPayload?.transcript).toBe('测试逐字稿')
     expect((patchPayload?.content as Record<string, unknown>).reportId).toBeUndefined()
     expect(stripReportMetadata(draft)).toEqual(content)
+  })
+
+  it('分别下载 HTML 与 PDF，使用服务端文件名', async () => {
+    const paths: string[] = []
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname
+      paths.push(`${init?.method ?? 'GET'} ${path}`)
+      const format = path.endsWith('/html') ? 'html' : 'pdf'
+      return new Response(`synthetic ${format}`, {
+        status: 200,
+        headers: {
+          'Content-Type': format === 'html' ? 'text/html' : 'application/pdf',
+          'Content-Disposition': `attachment; filename=report.${format}; filename*=UTF-8''2026-08-21%20%E5%91%A8%E4%BC%9A%E7%BA%AA%E8%A6%81.${format}`,
+        },
+      })
+    })
+    const client = createHttpApiClient('http://localhost:8000/api', fetchMock as typeof fetch)
+    const draft: ReportDraft = { ...content, reportId: 'report-1' }
+
+    const html = await client.exportReport(draft, 'html')
+    const pdf = await client.exportReport(draft, 'pdf')
+
+    expect(html.fileName).toBe('2026-08-21 周会纪要.html')
+    expect(pdf.fileName).toBe('2026-08-21 周会纪要.pdf')
+    expect(paths).toEqual([
+      'POST /api/reports/report-1/export/html',
+      'POST /api/reports/report-1/export',
+    ])
   })
 })

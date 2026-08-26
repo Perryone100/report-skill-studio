@@ -5,6 +5,7 @@ import {
   deriveWorkflowState,
   inferTerminologyCorrections,
   replaceTerminologyInText,
+  sortReportsByGeneratedAt,
   validateReport,
 } from './workbench'
 
@@ -26,6 +27,23 @@ const validDraft = (): ReportDraft => ({
       ],
     },
   ],
+})
+
+describe('sortReportsByGeneratedAt', () => {
+  it('不受点击或自动保存后的数组顺序与更新时间影响', () => {
+    const reports = [
+      {
+        id: 'older', projectId: 'project-1', title: '较早报告', period: '2026-08-20',
+        status: 'draft' as const, generatedAt: '2026-08-20T10:00:00Z', updatedAt: '2026-08-26T10:00:00Z',
+      },
+      {
+        id: 'newer', projectId: 'project-1', title: '较新报告', period: '2026-08-21',
+        status: 'confirmed' as const, generatedAt: '2026-08-21T10:00:00Z', updatedAt: '2026-08-21T11:00:00Z',
+      },
+    ]
+
+    expect(sortReportsByGeneratedAt(reports).map((report) => report.id)).toEqual(['newer', 'older'])
+  })
 })
 
 describe('validateReport', () => {

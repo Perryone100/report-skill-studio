@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from functools import lru_cache
+from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,10 +12,15 @@ from skill_engine import SkillLoadError
 
 from . import __version__
 from .config import Settings, get_settings
+from .data_management import export_project_backup
+from .local_library import LocalMarkdownLibrary
 from .models import (
     GenerateReportRequest,
     HealthResponse,
     Job,
+    LocalLibraryInfo,
+    LocalLibraryUpdate,
+    MarkdownSyncResult,
     Project,
     ProjectCreate,
     ProviderInfo,
@@ -44,6 +50,17 @@ def get_provider_registry() -> ProviderRegistry:
 
 def build_provider_registry(settings: Settings) -> ProviderRegistry:
     providers = [MockChatProvider()]
+    for connection in settings.openai_compatible_connection_configs:
+        providers.extend(
+            OpenAICompatibleChatProvider(
+                base_url=connection.base_url,
+                api_key=connection.api_key.get_secret_value(),
+                model=model,
+                provider_id=f"openai-compatible:{connection.id}:{model}",
+                provider_name=connection.name,
+            )
+            for model in connection.models
+        )
     if (
         settings.openai_compatible_base_url
         and settings.openai_compatible_api_key
@@ -69,12 +86,25 @@ def get_skill_registry() -> SkillRegistry:
     return SkillRegistry(settings.skills_dir, settings.user_skills_dir)
 
 
+def get_local_library(
+    store: SQLiteStore = Depends(get_store),
+) -> LocalMarkdownLibrary:
+    return LocalMarkdownLibrary(store, get_settings().projects_dir)
+
+
 def get_generation_service(
     store: SQLiteStore = Depends(get_store),
     providers: ProviderRegistry = Depends(get_provider_registry),
     skills: SkillRegistry = Depends(get_skill_registry),
+    local_library: LocalMarkdownLibrary = Depends(get_local_library),
 ) -> ReportGenerationService:
-    return ReportGenerationService(store, providers, skills, get_settings().artifacts_dir)
+    return ReportGenerationService(
+        store,
+        providers,
+        skills,
+        get_settings().artifacts_dir,
+        local_library,
+    )
 
 
 @asynccontextmanager
@@ -99,6 +129,22 @@ def create_app() -> FastAPI:
     def health() -> HealthResponse:
         return HealthResponse(version=__version__)
 
+    @app.get("/api/local-library", response_model=LocalLibraryInfo)
+    def get_local_library_info(
+        library: LocalMarkdownLibrary = Depends(get_local_library),
+    ) -> LocalLibraryInfo:
+        return library.info()
+
+    @app.put("/api/local-library", response_model=LocalLibraryInfo)
+    def configure_local_library(
+        payload: LocalLibraryUpdate,
+        library: LocalMarkdownLibrary = Depends(get_local_library),
+    ) -> LocalLibraryInfo:
+        try:
+            return library.configure(payload.root_path)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     @app.get("/api/projects", response_model=list[Project])
     def list_projects(store: SQLiteStore = Depends(get_store)) -> list[Project]:
         return store.list_projects()
@@ -113,6 +159,58 @@ def create_app() -> FastAPI:
             return store.get_project(project_id)
         except NotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/api/projects/{project_id}/backup")
+    def backup_project(
+        project_id: str,
+        store: SQLiteStore = Depends(get_store),
+    ) -> Response:
+        try:
+            backup = export_project_backup(store, project_id)
+            encoded_filename = quote(backup.filename)
+            return Response(
+                backup.content,
+                media_type="application/zip",
+                headers={
+                    "Content-Disposition": (
+                        f"attachment; filename=project-backup.zip; "
+                        f"filename*=UTF-8''{encoded_filename}"
+                    )
+                },
+            )
+        except NotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.delete("/api/projects/{project_id}/reports", status_code=204)
+    def clear_project_reports(
+        project_id: str,
+        store: SQLiteStore = Depends(get_store),
+        library: LocalMarkdownLibrary = Depends(get_local_library),
+    ) -> Response:
+        try:
+            library.delete_project_files(project_id)
+            for report in store.list_reports(project_id):
+                store.delete_report(report.id)
+            return Response(status_code=204)
+        except NotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.delete("/api/projects/{project_id}", status_code=204)
+    def delete_project(
+        project_id: str,
+        store: SQLiteStore = Depends(get_store),
+        library: LocalMarkdownLibrary = Depends(get_local_library),
+    ) -> Response:
+        try:
+            library.delete_project_files(project_id)
+            store.delete_project(project_id)
+            return Response(status_code=204)
+        except NotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.get("/api/reports", response_model=list[Report])
     def list_reports(
@@ -135,6 +233,21 @@ def create_app() -> FastAPI:
         except NotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @app.delete("/api/reports/{report_id}", status_code=204)
+    def delete_report(
+        report_id: str,
+        store: SQLiteStore = Depends(get_store),
+        library: LocalMarkdownLibrary = Depends(get_local_library),
+    ) -> Response:
+        try:
+            library.delete_report_file(report_id)
+            store.delete_report(report_id)
+            return Response(status_code=204)
+        except NotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
     @app.patch("/api/reports/{report_id}", response_model=Report)
     def update_report(
         report_id: str,
@@ -153,9 +266,12 @@ def create_app() -> FastAPI:
         report_id: str,
         payload: ReportDraftSave,
         store: SQLiteStore = Depends(get_store),
+        library: LocalMarkdownLibrary = Depends(get_local_library),
     ) -> Report:
         try:
-            return store.save_report_draft(report_id, **payload.model_dump())
+            store.save_report_draft(report_id, **payload.model_dump())
+            library.sync(report_id)
+            return store.get_report(report_id)
         except NotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
@@ -179,9 +295,12 @@ def create_app() -> FastAPI:
         report_id: str,
         version: int,
         store: SQLiteStore = Depends(get_store),
+        library: LocalMarkdownLibrary = Depends(get_local_library),
     ) -> Report:
         try:
-            return store.restore_report_version(report_id, version)
+            report = store.restore_report_version(report_id, version)
+            library.sync(report.id)
+            return report
         except NotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -221,6 +340,26 @@ def create_app() -> FastAPI:
         except ReportRendererError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
+    @app.get("/api/reports/{report_id}/markdown", response_model=MarkdownSyncResult)
+    def get_report_markdown_status(
+        report_id: str,
+        library: LocalMarkdownLibrary = Depends(get_local_library),
+    ) -> MarkdownSyncResult:
+        try:
+            return library.status(report_id)
+        except NotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/reports/{report_id}/markdown/sync", response_model=MarkdownSyncResult)
+    def sync_report_markdown(
+        report_id: str,
+        library: LocalMarkdownLibrary = Depends(get_local_library),
+    ) -> MarkdownSyncResult:
+        try:
+            return library.sync(report_id)
+        except NotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     @app.post("/api/reports/{report_id}/export", response_class=FileResponse)
     def export_report(
         report_id: str,
@@ -231,7 +370,7 @@ def create_app() -> FastAPI:
             return FileResponse(
                 artifact,
                 media_type="application/pdf",
-                filename=artifact.name,
+                filename=service.download_filename_for(report_id, "pdf"),
             )
         except NotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -239,6 +378,29 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except PdfRenderingUnavailableError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except ReportRendererError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    @app.post("/api/reports/{report_id}/export/html")
+    def export_report_html(
+        report_id: str,
+        service: ReportGenerationService = Depends(get_generation_service),
+    ) -> Response:
+        try:
+            html, filename = service.export_html(report_id)
+            return Response(
+                content=html,
+                media_type="text/html; charset=utf-8",
+                headers={
+                    "Content-Disposition": (
+                        f"attachment; filename=report.html; filename*=UTF-8''{quote(filename)}"
+                    )
+                },
+            )
+        except NotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ReportRendererError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 

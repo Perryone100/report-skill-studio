@@ -1,5 +1,5 @@
 import type { ProjectSummary, ReportSummary } from '../api'
-import { formatRelativeTime } from '../domain/workbench'
+import { formatRelativeTime, sortReportsByGeneratedAt } from '../domain/workbench'
 import { Icon } from './Icons'
 
 interface SidebarProps {
@@ -8,6 +8,8 @@ interface SidebarProps {
   activeProjectId: string
   activeReportId?: string
   onCreateProject: () => void
+  onOpenSettings: () => void
+  onOpenPrivacy: () => void
   onSelectProject: (projectId: string) => void
   onSelectReport: (report: ReportSummary) => void
 }
@@ -24,10 +26,14 @@ export function Sidebar({
   activeProjectId,
   activeReportId,
   onCreateProject,
+  onOpenSettings,
+  onOpenPrivacy,
   onSelectProject,
   onSelectReport,
 }: SidebarProps) {
-  const visibleReports = reports.filter((report) => report.projectId === activeProjectId)
+  const visibleReports = sortReportsByGeneratedAt(
+    reports.filter((report) => report.projectId === activeProjectId),
+  )
 
   return (
     <aside className="sidebar">
@@ -80,7 +86,7 @@ export function Sidebar({
                   <span className="history-icon"><Icon name="document" /></span>
                   <span className="history-copy">
                     <strong>{report.title}</strong>
-                    <small>{formatRelativeTime(report.updatedAt)}</small>
+                    <small>{formatRelativeTime(report.generatedAt)}</small>
                   </span>
                   <span className={`status-dot ${report.status}`} title={reportStatusLabel[report.status]} />
                 </button>
@@ -94,7 +100,8 @@ export function Sidebar({
 
       <div className="sidebar-footer">
         <div className="privacy-note"><span /> 数据默认保存在本机</div>
-        <button type="button" disabled><Icon name="settings" /> 设置</button>
+        <button type="button" onClick={onOpenPrivacy}><Icon name="briefcase" /> 隐私与数据管理</button>
+        <button type="button" onClick={onOpenSettings}><Icon name="settings" /> 本地项目库设置</button>
       </div>
     </aside>
   )

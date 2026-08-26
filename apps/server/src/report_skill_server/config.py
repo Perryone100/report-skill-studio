@@ -1,10 +1,64 @@
 from __future__ import annotations
 
+import json
+import re
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field, SecretStr
+from pydantic import BaseModel, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class OpenAICompatibleConnectionConfig(BaseModel):
+    """One independently authenticated OpenAI-compatible model endpoint."""
+
+    id: str = Field(min_length=1, max_length=50)
+    name: str = Field(min_length=1, max_length=80)
+    base_url: str = Field(min_length=1, max_length=2000)
+    api_key: SecretStr
+    models: list[str] = Field(min_length=1)
+
+    @field_validator("id")
+    @classmethod
+    def validate_id(cls, value: str) -> str:
+        normalized = value.strip()
+        if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", normalized):
+            raise ValueError("connection id must be lowercase kebab-case")
+        return normalized
+
+    @field_validator("name", "base_url")
+    @classmethod
+    def strip_required_text(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_base_url(cls, value: str) -> str:
+        if not value.startswith(("http://", "https://")):
+            raise ValueError("base_url must start with http:// or https://")
+        return value.rstrip("/")
+
+    @field_validator("models")
+    @classmethod
+    def normalize_models(cls, values: list[str]) -> list[str]:
+        models: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            model = value.strip()
+            if not model or model in seen:
+                continue
+            seen.add(model)
+            models.append(model)
+        if not models:
+            raise ValueError("models must contain at least one model id")
+        return models
+
+    @field_validator("api_key")
+    @classmethod
+    def validate_api_key(cls, value: SecretStr) -> SecretStr:
+        if not value.get_secret_value().strip():
+            raise ValueError("api_key cannot be blank")
+        return value
 
 
 class Settings(BaseSettings):
@@ -20,12 +74,16 @@ class Settings(BaseSettings):
     app_name: str = "Report Skill Studio"
     data_dir: Path = Field(default=Path("data"))
     skills_dir: Path = Field(default=Path("skills"))
+    projects_dir: Path = Field(
+        default_factory=lambda: Path.home() / "Documents" / "Report Skill Studio"
+    )
     cors_origins: str = "http://localhost:4173,http://127.0.0.1:4173"
 
     openai_compatible_base_url: str | None = None
     openai_compatible_api_key: SecretStr | None = None
     openai_compatible_model: str | None = None
     openai_compatible_models: str | None = None
+    openai_compatible_connections: str | None = None
 
     @property
     def openai_compatible_model_names(self) -> list[str]:
@@ -46,6 +104,28 @@ class Settings(BaseSettings):
             seen.add(model_name)
             model_names.append(model_name)
         return model_names
+
+    @property
+    def openai_compatible_connection_configs(
+        self,
+    ) -> list[OpenAICompatibleConnectionConfig]:
+        """Parse independently authenticated connections from a JSON array."""
+
+        raw = (self.openai_compatible_connections or "").strip()
+        if not raw:
+            return []
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError("RSS_OPENAI_COMPATIBLE_CONNECTIONS must be valid JSON") from exc
+        if not isinstance(payload, list):
+            raise ValueError("RSS_OPENAI_COMPATIBLE_CONNECTIONS must be a JSON array")
+
+        connections = [OpenAICompatibleConnectionConfig.model_validate(item) for item in payload]
+        ids = [connection.id for connection in connections]
+        if len(ids) != len(set(ids)):
+            raise ValueError("connection ids in RSS_OPENAI_COMPATIBLE_CONNECTIONS must be unique")
+        return connections
 
     @property
     def database_path(self) -> Path:

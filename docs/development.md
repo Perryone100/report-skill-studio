@@ -61,7 +61,9 @@ cp .env.example .env
 | --- | --- |
 | `RSS_DATA_DIR` | 本地数据目录，默认 `./data` |
 | `RSS_SKILLS_DIR` | 声明式 Skill 目录，默认 `./skills` |
+| `RSS_PROJECTS_DIR` | 本地 Markdown 项目库初始位置，默认 `~/Documents/Report Skill Studio` |
 | `RSS_CORS_ORIGINS` | 逗号分隔的前端来源列表 |
+| `RSS_OPENAI_COMPATIBLE_CONNECTIONS` | 多组独立地址、密钥和模型的单行 JSON 数组 |
 | `RSS_OPENAI_COMPATIBLE_BASE_URL` | 可选兼容服务地址，不含 `/chat/completions` |
 | `RSS_OPENAI_COMPATIBLE_API_KEY` | 可选兼容服务密钥 |
 | `RSS_OPENAI_COMPATIBLE_MODELS` | 可选模型标识列表，逗号分隔；每项显示为一个写作模型选项 |
@@ -70,7 +72,11 @@ cp .env.example .env
 | `VITE_USE_MOCK_API` | 设为 `true` 时显式启用前端 mock API；默认 `false` |
 | `RSS_NO_OPEN` | 仅影响一键启动；设为 `true` 时不自动打开浏览器 |
 
-地址、密钥和至少一个模型同时设置后，服务端才会注册对应的 OpenAI-compatible 写作模型；保持为空时，开发环境只提供不会联网的 `mock` provider。多个模型共用同一兼容 API 地址和密钥，每个模型都会成为下拉框中的独立选项。
+地址、密钥和至少一个模型同时设置后，服务端才会注册对应的 OpenAI-compatible 写作模型；保持为空时，开发环境只提供不会联网的 `mock` provider。旧变量中的多个模型共用一组地址和密钥；`RSS_OPENAI_COMPATIBLE_CONNECTIONS` 中每个对象使用独立连接，格式如下：
+
+```dotenv
+RSS_OPENAI_COMPATIBLE_CONNECTIONS='[{"id":"deepseek","name":"DeepSeek","base_url":"https://api.deepseek.com","api_key":"replace-in-local-env","models":["deepseek-chat"]},{"id":"gateway","name":"内部网关","base_url":"http://127.0.0.1:9000/v1","api_key":"replace-in-local-env","models":["writing-standard","writing-economy"]}]'
+```
 
 `.env` 已被 Git 忽略，但它仍是本机上的明文文件。真实密钥更适合在启动前通过 shell 或系统密钥管理工具注入，例如：
 
@@ -144,9 +150,7 @@ VITE_USE_MOCK_API=true
 
 ## 日常启动、休眠与重启
 
-当前仓库仍以开发模式运行，`npm run dev` 会占用一个常驻终端。Mac 只是进入睡眠、终端窗口和进程仍保留时，唤醒后通常可以直接继续使用；关闭终端、结束进程或重启电脑后，需要重新运行启动命令或双击启动文件。
-
-面向普通用户发布时，推荐把前端和本地服务封装为 Tauri 桌面应用，由应用图标负责启动和停止本地服务，这样不需要用户接触终端。开发阶段可以补充双击启动脚本作为过渡方案，但它不替代正式的桌面安装包。
+当前仓库以本地浏览器模式运行，`npm run dev` 会占用一个常驻终端。Mac 只是进入睡眠、终端窗口和进程仍保留时，唤醒后通常可以直接继续使用；关闭终端、结束进程或重启电脑后，需要重新运行启动命令或双击启动文件。
 
 ## 可选 PDF 支持
 
@@ -189,12 +193,26 @@ data/
 └── skills/
 ```
 
-SQLite 保存项目、逐字稿、报告、版本及用户确认过的术语记忆；导出的 PDF 等文件位于 `artifacts/`；从界面安装的用户 Skill 位于 `skills/`。`data/`、数据库文件、`.env` 与常见模型目录都被 Git 忽略。修改 `RSS_DATA_DIR` 可以把数据放到仓库外的绝对路径。
+SQLite 保存项目、逐字稿、结构化报告、版本及用户确认过的术语记忆；PDF 渲染过程的本地文件位于 `artifacts/`；从界面安装的用户 Skill 位于 `skills/`。`data/`、数据库文件、`.env` 与常见模型目录都被 Git 忽略。修改 `RSS_DATA_DIR` 可以把运行数据放到仓库外的绝对路径。
+
+生成后的可读文档另外同步到 Markdown 项目库，初始位置由 `RSS_PROJECTS_DIR` 指定，默认是 `~/Documents/Report Skill Studio`。用户在左侧设置中保存新路径后，SQLite 中的本地选择优先于环境变量初始值。项目库采用普通目录：
+
+```text
+Report Skill Studio/
+└── 项目名称/
+    └── 2026-08-26 周会纪要.md
+```
+
+项目文件夹只由工作台创建 `.md` 文件。Markdown 属性区包含报告 ID、项目、日期、状态和 Skill；正文使用标准标题、列表和表格，提示内容使用 Obsidian callout 语法。应用每次保存前会比较上次同步哈希；若文件已在 Obsidian 或其他编辑器中改变，会暂停覆盖并在界面提示冲突。当同日期、同标题发生冲突时，数字后缀会同时写入系统报告标题和 Markdown 标题，而不是只修改文件名。当前版本不会把外部 Markdown 修改反向导入结构化编辑器。
+
+HTML 和 PDF 只在用户点击相应导出按钮时下载，不写入 Markdown 项目文件夹。工作台通过绝对路径文本框修改项目库位置。
 
 用户 Skill 以 ZIP 原始内容上传到本地 API，限制为 8 MB 压缩包、25 MB 解压内容和 200 个文件。服务端拒绝路径穿越、符号链接、加密条目、不安全模板和当前工作台无法编辑的报告 Schema。内置 Skill 不能替换或删除；被已有报告引用的用户 Skill 也不能删除，避免历史报告失去渲染规则。
 
 未确认报告采用“工作副本 + 检查点”两层持久化：编辑停止约 0.8 秒后，标题、逐字稿和结构化内容会写入工作副本，但不会增加版本号；模型生成、确认前保存和主动恢复才形成可恢复版本。已确认报告保持不可变，恢复其中的历史版本时会创建一份新的未确认草稿。前端会比较当前工作副本与最近检查点，保守提取短文本修改作为专词候选；候选只有在用户点击“记住”后才写入长期项目记忆。
 
 默认前端只连接 `127.0.0.1`；`mock` provider、本地数据库、Skill 加载、校验和 HTML/PDF 渲染都不向外部服务发送数据。只有用户明确配置并选择云端 provider 时，生成请求所需的逐字稿、Skill 指令和 JSON Schema 才会发送到该 provider 的 `base_url`。把 `VITE_API_BASE_URL` 改成远程地址也会让浏览器把工作台请求发送到该地址，因此只能配置为自己信任的服务。API 密钥只从服务端运行环境读取，不应持久化到 SQLite、浏览器存储或日志。
+
+“隐私与数据管理”中的项目备份包含项目元数据、逐字稿、报告、版本、确认术语和 Markdown，不含运行环境或 API 密钥。清空历史和删除项目会先校验工作台上次写入的 Markdown 内容哈希；外部修改过的文件会触发 `409` 冲突，数据库和本地文件均保持不变。
 
 Skill 必须保持声明式：模板、Schema、术语和校验规则不能执行任意 Python 或 JavaScript。只有用户明确确认的纠错可以进入长期记忆。

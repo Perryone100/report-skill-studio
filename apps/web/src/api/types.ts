@@ -18,6 +18,7 @@ export interface ReportSummary {
   title: string
   period: string
   status: ReportStatus
+  generatedAt: string
   updatedAt: string
 }
 
@@ -132,6 +133,22 @@ export interface WorkspaceBootstrap {
   models: ModelOption[]
 }
 
+export interface LocalLibraryInfo {
+  rootPath: string
+  configured: boolean
+  exists: boolean
+  writable: boolean
+}
+
+export interface MarkdownSyncResult {
+  status: 'synced' | 'unsynced' | 'conflict' | 'missing' | 'no_content' | 'error'
+  rootPath: string
+  relativePath?: string
+  filePath?: string
+  message: string
+  syncedAt?: string
+}
+
 export interface GenerateReportInput {
   projectId: string
   title: string
@@ -159,6 +176,7 @@ export interface LoadedReport {
   skillId: string
   status: 'draft' | 'confirmed'
   version: number
+  generatedAt: string
   updatedAt: string
   draft: ReportDraft | null
   issues: ValidationIssue[]
@@ -168,6 +186,7 @@ export interface LoadedReport {
 export interface DraftSaveResult {
   updatedAt: string
   version: number
+  report: ReportDraft
 }
 
 export interface ExportArtifact {
@@ -175,6 +194,8 @@ export interface ExportArtifact {
   fileName: string
   mock: boolean
 }
+
+export type ExportFormat = 'html' | 'pdf'
 
 export interface TerminologyMemoryEntry {
   id: string

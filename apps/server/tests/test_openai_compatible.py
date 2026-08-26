@@ -7,6 +7,7 @@ from report_skill_server.providers import OpenAICompatibleChatProvider
 
 def test_openai_compatible_provider_returns_json_object() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "https://model.example/v1/chat/completions"
         assert request.headers["Authorization"] == "Bearer secret"
         payload = json.loads(request.content)
         assert payload["model"] == "test-model"
@@ -23,7 +24,7 @@ def test_openai_compatible_provider_returns_json_object() -> None:
         )
 
     provider = OpenAICompatibleChatProvider(
-        base_url="https://model.example/v1",
+        base_url="https://model.example/v1/chat/completions",
         api_key="secret",
         model="test-model",
         client=httpx.Client(transport=httpx.MockTransport(handler)),

@@ -26,7 +26,11 @@ class OpenAICompatibleChatProvider:
     ):
         self.id = provider_id or self.id
         self.name = provider_name or self.name
-        self.base_url = base_url.rstrip("/")
+        normalized_base_url = base_url.rstrip("/")
+        endpoint_suffix = "/chat/completions"
+        if normalized_base_url.endswith(endpoint_suffix):
+            normalized_base_url = normalized_base_url[: -len(endpoint_suffix)]
+        self.base_url = normalized_base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
         self.timeout = timeout

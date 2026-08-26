@@ -1,4 +1,10 @@
-import type { ReportBlock, ReportDraft, ValidationIssue } from '../api'
+import type { ReportBlock, ReportDraft, ReportSummary, ValidationIssue } from '../api'
+
+export function sortReportsByGeneratedAt(reports: ReportSummary[]): ReportSummary[] {
+  return [...reports].sort(
+    (left, right) => Date.parse(right.generatedAt) - Date.parse(left.generatedAt),
+  )
+}
 
 const internalLabelExpressions = ['图文结合版', '内容来源：', '汇报口径：', '整理口径：', '输出形式：', '老板汇报版', '管理层汇报版']
 

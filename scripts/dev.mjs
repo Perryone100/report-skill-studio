@@ -123,11 +123,13 @@ async function doctor() {
   const uvVersion = commandVersion('uv')
   const runner = webRunner()
   const environment = readLocalEnvironment()
-  const configuredProvider = [
+  const configuredLegacyProvider = [
     environment.values.RSS_OPENAI_COMPATIBLE_BASE_URL,
     environment.values.RSS_OPENAI_COMPATIBLE_API_KEY,
     environment.values.RSS_OPENAI_COMPATIBLE_MODELS || environment.values.RSS_OPENAI_COMPATIBLE_MODEL,
   ].every((value) => Boolean(value?.trim()))
+  const connectionConfig = environment.values.RSS_OPENAI_COMPATIBLE_CONNECTIONS?.trim()
+  const configuredProvider = configuredLegacyProvider || Boolean(connectionConfig && connectionConfig !== '[]')
   const pythonEnvironment = existsSync(join(repositoryRoot, '.venv'))
   const webDependencies = existsSync(join(repositoryRoot, 'apps', 'web', 'node_modules'))
   const apiRunning = await reachable(apiHealthUrl)

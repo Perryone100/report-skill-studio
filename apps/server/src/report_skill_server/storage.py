@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS reports (
     content_json TEXT NOT NULL,
     status TEXT NOT NULL,
     version INTEGER NOT NULL,
+    generated_at TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -79,6 +80,24 @@ CREATE TABLE IF NOT EXISTS terminology_memory (
     confirmed INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS project_markdown_folders (
+    project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+    folder_name TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS report_markdown_files (
+    report_id TEXT PRIMARY KEY REFERENCES reports(id) ON DELETE CASCADE,
+    filename TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    synced_at TEXT NOT NULL
 );
 """
 
@@ -118,6 +137,12 @@ class SQLiteStore:
                 connection.execute("ALTER TABLE report_versions ADD COLUMN title TEXT")
             if "transcript" not in version_columns:
                 connection.execute("ALTER TABLE report_versions ADD COLUMN transcript TEXT")
+            report_columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(reports)").fetchall()
+            }
+            if "generated_at" not in report_columns:
+                connection.execute("ALTER TABLE reports ADD COLUMN generated_at TEXT")
             connection.execute(
                 """
                 UPDATE report_versions
@@ -130,6 +155,21 @@ class SQLiteStore:
                     (SELECT reports.transcript FROM reports WHERE reports.id = report_versions.report_id)
                 )
                 WHERE title IS NULL OR transcript IS NULL
+                """
+            )
+            connection.execute(
+                """
+                UPDATE reports
+                SET generated_at = COALESCE(
+                    (
+                        SELECT MAX(report_versions.created_at)
+                        FROM report_versions
+                        WHERE report_versions.report_id = reports.id
+                          AND report_versions.reason LIKE 'generated:%'
+                    ),
+                    created_at
+                )
+                WHERE generated_at IS NULL
                 """
             )
 
@@ -155,6 +195,99 @@ class SQLiteStore:
             raise NotFoundError(f"project not found: {project_id}")
         return self._project_from_row(row)
 
+    def delete_project(self, project_id: str) -> None:
+        self.get_project(project_id)
+        with self.connect() as connection:
+            connection.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+
+    def get_setting(self, key: str) -> str | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT value FROM app_settings WHERE key = ?", (key,)
+            ).fetchone()
+        return None if row is None else str(row["value"])
+
+    def set_setting(self, key: str, value: str) -> None:
+        now = utc_now().isoformat()
+        with self.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO app_settings (key, value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+                """,
+                (key, value, now),
+            )
+
+    def get_project_markdown_folder(self, project_id: str) -> str | None:
+        self.get_project(project_id)
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT folder_name FROM project_markdown_folders WHERE project_id = ?",
+                (project_id,),
+            ).fetchone()
+        return None if row is None else str(row["folder_name"])
+
+    def list_project_markdown_folders(self) -> dict[str, str]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT project_id, folder_name FROM project_markdown_folders"
+            ).fetchall()
+        return {str(row["project_id"]): str(row["folder_name"]) for row in rows}
+
+    def set_project_markdown_folder(self, project_id: str, folder_name: str) -> None:
+        self.get_project(project_id)
+        with self.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO project_markdown_folders (project_id, folder_name)
+                VALUES (?, ?)
+                ON CONFLICT(project_id) DO UPDATE SET folder_name = excluded.folder_name
+                """,
+                (project_id, folder_name),
+            )
+
+    def get_report_markdown_file(self, report_id: str) -> dict[str, str] | None:
+        self.get_report(report_id)
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT filename, content_hash, synced_at
+                FROM report_markdown_files
+                WHERE report_id = ?
+                """,
+                (report_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "filename": str(row["filename"]),
+            "content_hash": str(row["content_hash"]),
+            "synced_at": str(row["synced_at"]),
+        }
+
+    def set_report_markdown_file(
+        self,
+        report_id: str,
+        *,
+        filename: str,
+        content_hash: str,
+        synced_at: datetime,
+    ) -> None:
+        self.get_report(report_id)
+        with self.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO report_markdown_files (report_id, filename, content_hash, synced_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(report_id) DO UPDATE SET
+                    filename = excluded.filename,
+                    content_hash = excluded.content_hash,
+                    synced_at = excluded.synced_at
+                """,
+                (report_id, filename, content_hash, synced_at.isoformat()),
+            )
+
     def create_report(
         self,
         *,
@@ -171,8 +304,8 @@ class SQLiteStore:
             connection.execute(
                 """
                 INSERT INTO reports
-                    (id, project_id, title, transcript, skill_id, content_json, status, version, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, project_id, title, transcript, skill_id, content_json, status, version, generated_at, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     report_id,
@@ -183,6 +316,7 @@ class SQLiteStore:
                     json.dumps(content, ensure_ascii=False),
                     ReportStatus.DRAFT.value,
                     1,
+                    now.isoformat(),
                     now.isoformat(),
                     now.isoformat(),
                 ),
@@ -205,7 +339,7 @@ class SQLiteStore:
         if project_id is not None:
             query += " WHERE project_id = ?"
             params = (project_id,)
-        query += " ORDER BY updated_at DESC"
+        query += " ORDER BY generated_at DESC"
         with self.connect() as connection:
             rows = connection.execute(query, params).fetchall()
         return [self._report_from_row(row) for row in rows]
@@ -216,6 +350,11 @@ class SQLiteStore:
         if row is None:
             raise NotFoundError(f"report not found: {report_id}")
         return self._report_from_row(row)
+
+    def delete_report(self, report_id: str) -> None:
+        self.get_report(report_id)
+        with self.connect() as connection:
+            connection.execute("DELETE FROM reports WHERE id = ?", (report_id,))
 
     def update_report(
         self,
@@ -235,11 +374,12 @@ class SQLiteStore:
         next_content = content if content is not None else report.content
         next_version = report.version + 1
         now = utc_now()
+        next_generated_at = now if reason.startswith("generated:") else report.generated_at
         with self.connect() as connection:
             connection.execute(
                 """
                 UPDATE reports
-                SET title = ?, transcript = ?, content_json = ?, version = ?, updated_at = ?
+                SET title = ?, transcript = ?, content_json = ?, version = ?, generated_at = ?, updated_at = ?
                 WHERE id = ?
                 """,
                 (
@@ -247,6 +387,7 @@ class SQLiteStore:
                     next_transcript,
                     json.dumps(next_content, ensure_ascii=False),
                     next_version,
+                    next_generated_at.isoformat(),
                     now.isoformat(),
                     report_id,
                 ),
@@ -299,6 +440,61 @@ class SQLiteStore:
                     report_id,
                 ),
             )
+        return self.get_report(report_id)
+
+    def align_report_document_title(self, report_id: str, title: str) -> Report:
+        """Align the persisted report title with its allocated Markdown document name.
+
+        Markdown filename allocation happens after structured generation, because the
+        meeting date is part of the filename.  A same-day collision may therefore add
+        a numeric suffix after the generated version already exists.  This narrowly
+        scoped metadata update keeps the current report and the title in its current
+        checkpoint consistent without creating a user-edit version.  Only the title
+        field of that checkpoint is changed; later working-copy content is never
+        copied into history.
+        """
+
+        report = self.get_report(report_id)
+        next_content = dict(report.content)
+        next_content["title"] = title
+        if report.title == title and report.content == next_content:
+            return report
+
+        now = utc_now()
+        encoded_content = json.dumps(next_content, ensure_ascii=False)
+        with self.connect() as connection:
+            connection.execute(
+                """
+                UPDATE reports
+                SET title = ?, content_json = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (title, encoded_content, now.isoformat(), report_id),
+            )
+            snapshot = connection.execute(
+                """
+                SELECT content_json FROM report_versions
+                WHERE report_id = ? AND version = ?
+                """,
+                (report_id, report.version),
+            ).fetchone()
+            if snapshot is not None:
+                snapshot_content = json.loads(str(snapshot["content_json"]))
+                if snapshot_content:
+                    snapshot_content["title"] = title
+                connection.execute(
+                    """
+                    UPDATE report_versions
+                    SET title = ?, content_json = ?
+                    WHERE report_id = ? AND version = ?
+                    """,
+                    (
+                        title,
+                        json.dumps(snapshot_content, ensure_ascii=False),
+                        report_id,
+                        report.version,
+                    ),
+                )
         return self.get_report(report_id)
 
     def list_report_versions(self, report_id: str) -> list[ReportVersion]:
@@ -567,6 +763,7 @@ class SQLiteStore:
             content=json.loads(row["content_json"]),
             status=ReportStatus(row["status"]),
             version=row["version"],
+            generated_at=datetime.fromisoformat(row["generated_at"]),
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
         )
