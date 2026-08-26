@@ -30,6 +30,10 @@ interface ApiProject {
   updated_at: string
 }
 
+interface ApiSession {
+  request_token: string
+}
+
 interface ApiReport {
   id: string
   project_id: string
@@ -277,18 +281,50 @@ export function createHttpApiClient(
   fetchImpl: FetchLike = fetch,
 ): WorkbenchApi {
   const apiBaseUrl = trimTrailingSlash(baseUrl)
+  let sessionTokenPromise: Promise<string> | null = null
+
+  const getSessionToken = async (signal?: AbortSignal) => {
+    if (!sessionTokenPromise) {
+      sessionTokenPromise = (async () => {
+        const response = await fetchImpl(`${apiBaseUrl}/session`, { signal })
+        if (!response.ok) throw new ApiError(await errorMessage(response), `HTTP_${response.status}`)
+        const session = await response.json() as ApiSession
+        if (!session.request_token) throw new ApiError('本地服务未返回请求令牌。', 'INVALID_RESPONSE')
+        return session.request_token
+      })()
+      sessionTokenPromise.catch(() => { sessionTokenPromise = null })
+    }
+    return sessionTokenPromise
+  }
+
+  const performFetch = async (
+    path: string,
+    init: RequestInit = {},
+    signal?: AbortSignal,
+    retry = true,
+  ): Promise<Response> => {
+    const method = (init.method ?? 'GET').toUpperCase()
+    const unsafe = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)
+    const headers = new Headers(init.headers)
+    if (unsafe) headers.set('X-Report-Skill-Token', await getSessionToken(signal))
+    const response = await fetchImpl(`${apiBaseUrl}${path}`, { ...init, headers, signal })
+    if (unsafe && response.status === 403 && retry) {
+      sessionTokenPromise = null
+      return performFetch(path, init, signal, false)
+    }
+    return response
+  }
 
   const requestJson = async <Result>(path: string, init: RequestInit = {}, signal?: AbortSignal) => {
     let response: Response
     try {
-      response = await fetchImpl(`${apiBaseUrl}${path}`, {
+      response = await performFetch(path, {
         ...init,
-        signal,
         headers: {
           ...(init.body ? { 'Content-Type': 'application/json' } : {}),
           ...init.headers,
         },
-      })
+      }, signal)
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') throw error
       throw new ApiError('无法连接本地服务，请确认 FastAPI 已启动。', 'NETWORK_ERROR')
@@ -309,7 +345,7 @@ export function createHttpApiClient(
   const requestVoid = async (path: string, init: RequestInit, signal?: AbortSignal) => {
     let response: Response
     try {
-      response = await fetchImpl(`${apiBaseUrl}${path}`, { ...init, signal })
+      response = await performFetch(path, init, signal)
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') throw error
       throw new ApiError('无法连接本地服务，请确认 FastAPI 已启动。', 'NETWORK_ERROR')
@@ -380,9 +416,8 @@ export function createHttpApiClient(
     async exportProjectBackup(projectId, signal) {
       let response: Response
       try {
-        response = await fetchImpl(
-          `${apiBaseUrl}/projects/${encodeURIComponent(projectId)}/backup`,
-          { signal },
+        response = await performFetch(
+          `/projects/${encodeURIComponent(projectId)}/backup`, {}, signal,
         )
       } catch (error) {
         if (error instanceof DOMException && error.name === 'AbortError') throw error
@@ -545,10 +580,7 @@ export function createHttpApiClient(
         const path = format === 'pdf'
           ? `/reports/${report.reportId}/export`
           : `/reports/${report.reportId}/export/html`
-        response = await fetchImpl(`${apiBaseUrl}${path}`, {
-          method: 'POST',
-          signal,
-        })
+        response = await performFetch(path, { method: 'POST' }, signal)
       } catch (error) {
         if (error instanceof DOMException && error.name === 'AbortError') throw error
         throw new ApiError('无法连接本地服务，请确认 FastAPI 已启动。', 'NETWORK_ERROR')

@@ -168,3 +168,7 @@ class TerminologyMemory(BaseModel):
 class HealthResponse(BaseModel):
     status: str = "ok"
     version: str
+
+
+class SessionInfo(BaseModel):
+    request_token: str

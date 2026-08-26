@@ -5,6 +5,7 @@ from typing import Any
 
 import httpx
 
+from ..config import validate_provider_base_url
 from .base import ProviderGenerationError
 
 
@@ -26,7 +27,7 @@ class OpenAICompatibleChatProvider:
     ):
         self.id = provider_id or self.id
         self.name = provider_name or self.name
-        normalized_base_url = base_url.rstrip("/")
+        normalized_base_url = validate_provider_base_url(base_url)
         endpoint_suffix = "/chat/completions"
         if normalized_base_url.endswith(endpoint_suffix):
             normalized_base_url = normalized_base_url[: -len(endpoint_suffix)]

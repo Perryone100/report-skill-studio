@@ -40,6 +40,8 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClie
     )
 
     with TestClient(app) as test_client:
+        token = test_client.get("/api/session").json()["request_token"]
+        test_client.headers["X-Report-Skill-Token"] = token
         yield test_client
 
     app.dependency_overrides.clear()

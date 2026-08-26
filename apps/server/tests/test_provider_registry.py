@@ -92,3 +92,61 @@ def test_duplicate_connection_ids_are_rejected_without_exposing_keys() -> None:
         _ = settings.openai_compatible_connection_configs
     assert "secret-a" not in str(caught.value)
     assert "secret-b" not in str(caught.value)
+
+
+def test_remote_http_model_endpoints_are_rejected() -> None:
+    settings = Settings(
+        _env_file=None,
+        openai_compatible_connections=json.dumps([
+            {
+                "id": "remote",
+                "name": "Remote",
+                "base_url": "http://model.example/v1",
+                "api_key": "secret",
+                "models": ["model"],
+            }
+        ]),
+    )
+
+    with pytest.raises(ValueError, match="must use HTTPS"):
+        _ = settings.openai_compatible_connection_configs
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    ["http://localhost:9000/v1", "http://127.0.0.2:9000/v1", "http://[::1]:9000/v1"],
+)
+def test_loopback_http_model_endpoints_remain_supported(base_url: str) -> None:
+    settings = Settings(
+        _env_file=None,
+        openai_compatible_connections=json.dumps([
+            {
+                "id": "local",
+                "name": "Local",
+                "base_url": base_url,
+                "api_key": "secret",
+                "models": ["model"],
+            }
+        ]),
+    )
+
+    assert settings.openai_compatible_connection_configs[0].base_url == base_url
+
+
+def test_enabled_legacy_remote_http_endpoint_is_rejected() -> None:
+    with pytest.raises(ValueError, match="must use HTTPS"):
+        Settings(
+            _env_file=None,
+            openai_compatible_base_url="http://model.example/v1",
+            openai_compatible_api_key="secret",
+            openai_compatible_model="model",
+        )
+
+
+def test_incomplete_legacy_endpoint_does_not_break_offline_fallback() -> None:
+    settings = Settings(
+        _env_file=None,
+        openai_compatible_base_url="http://model.example/v1",
+    )
+
+    assert settings.openai_compatible_base_url == "http://model.example/v1"

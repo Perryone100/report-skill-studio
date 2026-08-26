@@ -168,6 +168,8 @@ def test_confirmed_report_downloads_standalone_html(client: TestClient) -> None:
 
     exported = client.post(f"/api/reports/{report_id}/export/html")
     assert exported.status_code == 200
+    assert "script-src 'none'" in exported.headers["content-security-policy"]
+    assert exported.headers["x-content-type-options"] == "nosniff"
     assert exported.headers["content-type"].startswith("text/html")
     assert "attachment" in exported.headers["content-disposition"]
     assert "filename*=UTF-8''" in exported.headers["content-disposition"]

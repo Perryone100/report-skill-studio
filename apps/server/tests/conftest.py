@@ -39,4 +39,6 @@ def client(store: SQLiteStore, tmp_path: Path) -> Iterator[TestClient]:
         tmp_path / "markdown-library",
     )
     with TestClient(app) as test_client:
+        token = test_client.get("/api/session").json()["request_token"]
+        test_client.headers["X-Report-Skill-Token"] = token
         yield test_client

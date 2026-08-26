@@ -9,14 +9,15 @@ import type {
   TerminologyMemoryEntry,
   WorkspaceBootstrap,
 } from './types'
+import { escapeHtml } from '../security/html'
 
 const wait = (milliseconds: number, signal?: AbortSignal) =>
   new Promise<void>((resolve, reject) => {
-    const timer = window.setTimeout(resolve, milliseconds)
+    const timer = globalThis.setTimeout(resolve, milliseconds)
     signal?.addEventListener(
       'abort',
       () => {
-        window.clearTimeout(timer)
+        globalThis.clearTimeout(timer)
         reject(new DOMException('请求已取消', 'AbortError'))
       },
       { once: true },
@@ -532,8 +533,8 @@ export const mockApiClient: WorkbenchApi = {
   async exportReport(report, format: ExportFormat, signal): Promise<ExportArtifact> {
     await wait(450, signal)
     const { reportId: _reportId, ...content } = report
-    const escaped = JSON.stringify(content, null, 2)
-    const html = `<!doctype html><html lang="zh-CN"><meta charset="UTF-8"><title>${report.title}</title><body><pre>${escaped}</pre></body></html>`
+    const escaped = escapeHtml(JSON.stringify(content, null, 2))
+    const html = `<!doctype html><html lang="zh-CN"><meta charset="UTF-8"><title>${escapeHtml(report.title)}</title><body><pre>${escaped}</pre></body></html>`
     return {
       blob: new Blob([html], { type: 'text/html;charset=utf-8' }),
       fileName: `${report.title.replace(/[\\/:*?"<>|]/g, '-')}-Mock预览.${format === 'pdf' ? 'html' : format}`,

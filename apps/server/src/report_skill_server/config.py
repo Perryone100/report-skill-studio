@@ -1,12 +1,39 @@
 from __future__ import annotations
 
 import json
+import ipaddress
 import re
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, Field, SecretStr, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def validate_provider_base_url(value: str) -> str:
+    """Require HTTPS except for an explicitly loopback HTTP endpoint."""
+
+    normalized = value.strip().rstrip("/")
+    parsed = urlsplit(normalized)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("base_url must be a valid http:// or https:// URL")
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ValueError("base_url cannot contain credentials, a query, or a fragment")
+    try:
+        parsed.port
+    except ValueError as exc:
+        raise ValueError("base_url contains an invalid port") from exc
+    if parsed.scheme == "http":
+        hostname = parsed.hostname.lower()
+        is_loopback = hostname == "localhost"
+        try:
+            is_loopback = is_loopback or ipaddress.ip_address(hostname).is_loopback
+        except ValueError:
+            pass
+        if not is_loopback:
+            raise ValueError("remote model endpoints must use HTTPS; HTTP is loopback-only")
+    return normalized
 
 
 class OpenAICompatibleConnectionConfig(BaseModel):
@@ -34,9 +61,7 @@ class OpenAICompatibleConnectionConfig(BaseModel):
     @field_validator("base_url")
     @classmethod
     def validate_base_url(cls, value: str) -> str:
-        if not value.startswith(("http://", "https://")):
-            raise ValueError("base_url must start with http:// or https://")
-        return value.rstrip("/")
+        return validate_provider_base_url(value)
 
     @field_validator("models")
     @classmethod
@@ -78,12 +103,25 @@ class Settings(BaseSettings):
         default_factory=lambda: Path.home() / "Documents" / "Report Skill Studio"
     )
     cors_origins: str = "http://localhost:4173,http://127.0.0.1:4173"
+    allowed_hosts: str = "127.0.0.1,localhost,::1,testserver"
 
     openai_compatible_base_url: str | None = None
     openai_compatible_api_key: SecretStr | None = None
     openai_compatible_model: str | None = None
     openai_compatible_models: str | None = None
     openai_compatible_connections: str | None = None
+
+    @model_validator(mode="after")
+    def validate_enabled_legacy_connection(self) -> "Settings":
+        if (
+            self.openai_compatible_base_url
+            and self.openai_compatible_api_key
+            and self.openai_compatible_model_names
+        ):
+            self.openai_compatible_base_url = validate_provider_base_url(
+                self.openai_compatible_base_url
+            )
+        return self
 
     @property
     def openai_compatible_model_names(self) -> list[str]:
@@ -144,6 +182,18 @@ class Settings(BaseSettings):
     @property
     def allowed_origins(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def trusted_origins(self) -> list[str]:
+        return list(dict.fromkeys([
+            *self.allowed_origins,
+            "http://127.0.0.1:8000",
+            "http://localhost:8000",
+        ]))
+
+    @property
+    def trusted_hosts(self) -> list[str]:
+        return [host.strip() for host in self.allowed_hosts.split(",") if host.strip()]
 
     def ensure_directories(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)

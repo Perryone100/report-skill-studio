@@ -13,7 +13,7 @@ Report Skill Studio uses a ports-and-adapters architecture so model vendors, tra
 - Validation is deterministic and runs before and after user review.
 - The renderer accepts only validated structured report data and a trusted declarative template.
 - The local Markdown library projects canonical report blocks into plain `.md` files; SQLite remains the authoritative structured working state.
-- Long-running generation, transcription, and rendering operations use persisted jobs with explicit status.
+- Generation records a persisted job but executes synchronously in v0.4. PDF rendering is also synchronous. Transcription is not implemented.
 
 ## Model boundary and cost control
 
@@ -39,6 +39,11 @@ rules.
 One OpenAI-compatible connection may register multiple writing model ids. This
 lets the user choose an economy or higher-quality model per report without
 coupling model choice to Skills, storage, validation, or rendering.
+
+Remote model endpoints must use HTTPS. HTTP is accepted only for localhost or
+an IP loopback endpoint. Browser mutations use a process-local request token,
+trusted Host and Origin checks, and loopback-only documented launch commands.
+These controls do not turn the v0.4 API into a remote or multi-user service.
 
 ## MVP non-goals
 

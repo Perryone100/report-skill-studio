@@ -4,7 +4,7 @@
 
 Report Skill Studio 是一个本地优先、开源的结构化报告工作台。它把会议逐字稿或零散工作记录交给用户选择的写作模型，再按照声明式 Skill 生成可编辑、可校验、可追溯版本的报告。报告会同步为适合 Obsidian 等工具阅读的本地 Markdown，也能按需下载 HTML 或 PDF。
 
-项目当前进入 `v0.4`：除可用的报告编辑主流程外，已经加入本地 Markdown 项目库、多地址多密钥模型连接，以及项目备份与删除保护。内置周会 Skill 已覆盖执行摘要、本周重点项目、工作进展、下周计划及风险协调；同一套工作台也可以通过 ZIP 安装其他报告 Skill，不局限于周报。
+当前版本为 `v0.4.0`：除可用的报告编辑主流程外，已经加入本地 Markdown 项目库、多地址多密钥模型连接，以及项目备份与删除保护。内置周会 Skill 已覆盖执行摘要、本周重点项目、工作进展、下周计划及风险协调；同一套工作台也可以通过 ZIP 安装其他报告 Skill，不局限于周报。
 
 ## 为什么做这个项目
 
@@ -81,7 +81,7 @@ RSS_OPENAI_COMPATIBLE_MODELS=writing-standard,writing-economy
 RSS_OPENAI_COMPATIBLE_CONNECTIONS='[{"id":"provider-a","name":"Provider A","base_url":"https://a.example/v1","api_key":"replace-locally","models":["model-a"]},{"id":"provider-b","name":"Provider B","base_url":"https://b.example/v1","api_key":"replace-locally","models":["model-b","model-b-economy"]}]'
 ```
 
-每个连接的地址、密钥和模型列表相互独立，也可与旧配置同时使用。密钥只从服务端运行环境读取，不写入 SQLite、浏览器存储或日志。未配置云模型时仍可使用不会联网的本地 mock provider 验证流程。
+每个连接的地址、密钥和模型列表相互独立，也可与旧配置同时使用。远程地址必须使用 HTTPS，本机 `localhost` 和 IP 回环模型可继续使用 HTTP。密钥只从服务端运行环境读取，不写入 SQLite、浏览器存储或日志。未配置云模型时仍可使用不会联网的本地 mock provider 验证流程。
 
 ## 报告 Skill
 
@@ -114,7 +114,7 @@ data/
 └── skills/
 ```
 
-仓库内的 `.env`、数据库、逐字稿、用户 Skill、模型和渲染产物均被 Git 忽略。默认 Markdown 项目库位于仓库之外；如果用户主动把项目库放进另一个 Git 仓库，则其中的 `.md` 文件可以像普通 Obsidian 笔记一样自行版本管理。只有当用户明确配置并选择云模型时，当前生成请求需要的逐字稿、Skill 指令和 JSON Schema 才会发送到该模型服务。
+仓库内的 `.env`、数据库、逐字稿、用户 Skill、模型和渲染产物均被 Git 忽略。默认 Markdown 项目库位于仓库之外；如果用户主动把项目库放进另一个 Git 仓库，则其中的 `.md` 文件可以像普通 Obsidian 笔记一样自行版本管理。只有当用户明确配置并选择云模型时，当前生成请求需要的项目上下文、逐字稿、相关确认术语、Skill 指令和 JSON Schema 才会发送到该模型服务。完整边界见 [隐私说明](PRIVACY.md)。
 
 左侧“隐私与数据管理”可以下载单项目 ZIP 备份、清空报告历史或删除整个项目。备份包含该项目的报告、逐字稿、版本、确认过的术语和 Markdown，不包含任何 API 密钥；执行删除前会检查工作台管理的 Markdown 是否被外部修改，检测到冲突时拒绝删除并保留数据库和文件。
 
@@ -135,6 +135,7 @@ Report Skill Studio/
 - 暂不提供云端协作、账号同步和飞书账号直连；
 - 自定义 Skill 仍需使用当前五种规范化内容块；
 - 修改本地项目库时需要填写绝对路径。
+- v0.4.0 只支持单用户回环地址运行，不应把本地 API 暴露到局域网或公网。
 
 ## 仓库结构
 
@@ -156,3 +157,5 @@ pnpm build:web
 ## License
 
 [MIT](LICENSE)
+
+版本变化见 [Changelog](CHANGELOG.md)。贡献前请阅读 [贡献指南](CONTRIBUTING.md)、[安全政策](SECURITY.md)、[隐私说明](PRIVACY.md) 与 [行为准则](CODE_OF_CONDUCT.md)。

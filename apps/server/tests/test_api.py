@@ -70,6 +70,8 @@ def test_report_lifecycle(client: TestClient) -> None:
 
     preview = client.get(f"/api/reports/{report_id}/preview")
     assert preview.status_code == 200
+    assert "script-src 'none'" in preview.headers["content-security-policy"]
+    assert preview.headers["x-content-type-options"] == "nosniff"
     assert "产品研发周会纪要" in preview.text
     assert "图文结合版" not in preview.text
 
@@ -154,6 +156,45 @@ def test_lists_bundled_skills(client: TestClient) -> None:
     assert response.json()[0]["can_delete"] is False
 
 
+def test_local_mutations_require_session_token_and_trusted_origin(client: TestClient) -> None:
+    token = client.headers.pop("X-Report-Skill-Token")
+    try:
+        missing = client.post("/api/projects", json={"name": "不应创建"})
+    finally:
+        client.headers["X-Report-Skill-Token"] = token
+    assert missing.status_code == 403
+
+    untrusted = client.post(
+        "/api/projects",
+        json={"name": "不应创建"},
+        headers={"Origin": "https://untrusted.example"},
+    )
+    assert untrusted.status_code == 403
+    assert client.get("/api/projects").json() == []
+
+
+def test_session_rejects_untrusted_origin_and_host(client: TestClient) -> None:
+    assert client.get("/api/session").headers["cache-control"] == "no-store"
+    assert client.get(
+        "/api/session", headers={"Origin": "https://untrusted.example"}
+    ).status_code == 403
+    assert client.get("/api/health", headers={"Host": "untrusted.example"}).status_code == 400
+    assert client.get("/api/health", headers={"Host": "[::1]:8000"}).status_code == 200
+
+
+def test_cors_preflight_remains_available(client: TestClient) -> None:
+    response = client.options(
+        "/api/projects",
+        headers={
+            "Origin": "http://127.0.0.1:4173",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "X-Report-Skill-Token,Content-Type",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:4173"
+
+
 def test_installs_replaces_and_deletes_user_skill(client: TestClient) -> None:
     archive = _skill_archive()
     installed = client.post(
@@ -172,9 +213,15 @@ def test_installs_replaces_and_deletes_user_skill(client: TestClient) -> None:
         "can_delete": True,
     }
 
-    duplicate = client.post("/api/skills/install", content=archive)
+    duplicate = client.post(
+        "/api/skills/install", content=archive, headers={"Content-Type": "application/zip"}
+    )
     assert duplicate.status_code == 409
-    replaced = client.post("/api/skills/install?replace=true", content=archive)
+    replaced = client.post(
+        "/api/skills/install?replace=true",
+        content=archive,
+        headers={"Content-Type": "application/zip"},
+    )
     assert replaced.status_code == 201
 
     listed = client.get("/api/skills").json()
@@ -192,7 +239,11 @@ def test_rejects_unsafe_skill_zip_entry(client: TestClient) -> None:
         archive.writestr("../outside.txt", "must not be written")
         archive.writestr("skill.yaml", "invalid")
 
-    response = client.post("/api/skills/install", content=buffer.getvalue())
+    response = client.post(
+        "/api/skills/install",
+        content=buffer.getvalue(),
+        headers={"Content-Type": "application/zip"},
+    )
 
     assert response.status_code == 422
     assert "unsafe ZIP entry" in response.json()["detail"]
@@ -202,15 +253,29 @@ def test_rejects_invalid_skill_upload_length_header(client: TestClient) -> None:
     response = client.post(
         "/api/skills/install",
         content=_skill_archive(),
-        headers={"Content-Length": "not-a-number"},
+        headers={"Content-Length": "not-a-number", "Content-Type": "application/zip"},
     )
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Invalid Content-Length header"
 
 
+def test_skill_upload_requires_zip_content_type(client: TestClient) -> None:
+    response = client.post(
+        "/api/skills/install",
+        content=_skill_archive(),
+        headers={"Content-Type": "text/plain"},
+    )
+
+    assert response.status_code == 415
+
+
 def test_skill_used_by_report_cannot_be_deleted(client: TestClient) -> None:
-    installed = client.post("/api/skills/install", content=_skill_archive())
+    installed = client.post(
+        "/api/skills/install",
+        content=_skill_archive(),
+        headers={"Content-Type": "application/zip"},
+    )
     assert installed.status_code == 201
     project = client.post("/api/projects", json={"name": "Skill 引用测试"}).json()
     report = client.post(
@@ -228,7 +293,9 @@ def test_skill_used_by_report_cannot_be_deleted(client: TestClient) -> None:
     assert deleted.status_code == 409
 
     replaced = client.post(
-        "/api/skills/install?replace=true", content=_skill_archive()
+        "/api/skills/install?replace=true",
+        content=_skill_archive(),
+        headers={"Content-Type": "application/zip"},
     )
     assert replaced.status_code == 422
     assert "used by saved reports" in replaced.json()["detail"]

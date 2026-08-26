@@ -8,6 +8,14 @@ const jsonResponse = (payload: unknown, status = 200) =>
     headers: { 'Content-Type': 'application/json' },
   })
 
+const withSession = (fetchMock: typeof fetch): typeof fetch =>
+  (async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (new URL(String(input)).pathname.endsWith('/session')) {
+      return jsonResponse({ request_token: 'test-request-token' })
+    }
+    return fetchMock(input, init)
+  }) as typeof fetch
+
 const content = {
   title: '产品研发周会纪要',
   meeting_date: '2026-08-21',
@@ -49,7 +57,7 @@ describe('HTTP API client', () => {
       ])
       return jsonResponse({ detail: 'not found' }, 404)
     })
-    const client = createHttpApiClient('http://localhost:8000/api/', fetchMock as typeof fetch)
+    const client = createHttpApiClient('http://localhost:8000/api/', withSession(fetchMock as typeof fetch))
 
     const workspace = await client.getWorkspace()
 
@@ -91,7 +99,7 @@ describe('HTTP API client', () => {
         configured: init?.method === 'PUT', exists: true, writable: true,
       })
     })
-    const client = createHttpApiClient('http://localhost:8000/api', fetchMock as typeof fetch)
+    const client = createHttpApiClient('http://localhost:8000/api', withSession(fetchMock as typeof fetch))
 
     const initial = await client.getLocalLibrary()
     const configured = await client.configureLocalLibrary('/Users/demo/Reports')
@@ -124,7 +132,7 @@ describe('HTTP API client', () => {
       if (path.endsWith('/reports/report-1')) return jsonResponse(apiReport())
       return jsonResponse({ detail: 'not found' }, 404)
     })
-    const client = createHttpApiClient('http://localhost:8000/api', fetchMock as typeof fetch)
+    const client = createHttpApiClient('http://localhost:8000/api', withSession(fetchMock as typeof fetch))
 
     const result = await client.generateReport({
       projectId: 'project-1',
@@ -157,13 +165,38 @@ describe('HTTP API client', () => {
         updated_at: '2026-08-24T10:00:00Z',
       }, 201)
     })
-    const client = createHttpApiClient('http://localhost:8000/api', fetchMock as typeof fetch)
+    const client = createHttpApiClient('http://localhost:8000/api', withSession(fetchMock as typeof fetch))
 
     const project = await client.createProject({ name: '演示项目', description: '虚构周会' })
 
     expect(body).toEqual({ name: '演示项目', description: '虚构周会' })
     expect(project).toMatchObject({ id: 'project-new', name: '演示项目', status: 'active' })
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('写请求携带会话令牌，并在服务重启后刷新一次', async () => {
+    const seenTokens: Array<string | null> = []
+    let sessionCount = 0
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname
+      if (path.endsWith('/session')) {
+        sessionCount += 1
+        return jsonResponse({ request_token: sessionCount === 1 ? 'expired' : 'current' })
+      }
+      const token = new Headers(init?.headers).get('X-Report-Skill-Token')
+      seenTokens.push(token)
+      if (token === 'expired') return jsonResponse({ detail: 'expired' }, 403)
+      return jsonResponse({
+        id: 'project-new', name: '演示项目', description: '',
+        created_at: '2026-08-24T10:00:00Z', updated_at: '2026-08-24T10:00:00Z',
+      }, 201)
+    })
+    const client = createHttpApiClient('http://localhost:8000/api', fetchMock as typeof fetch)
+
+    await client.createProject({ name: '演示项目', description: '' })
+
+    expect(sessionCount).toBe(2)
+    expect(seenTokens).toEqual(['expired', 'current'])
   })
 
   it('导出项目备份并提供清空和删除操作', async () => {
@@ -181,7 +214,7 @@ describe('HTTP API client', () => {
       }
       return new Response(null, { status: 204 })
     })
-    const client = createHttpApiClient('http://localhost:8000/api', fetchMock as typeof fetch)
+    const client = createHttpApiClient('http://localhost:8000/api', withSession(fetchMock as typeof fetch))
 
     const backup = await client.exportProjectBackup('project-1')
     await client.clearProjectReports('project-1')
@@ -222,7 +255,7 @@ describe('HTTP API client', () => {
       if (path.endsWith('/reports/report-1')) return jsonResponse(apiReport())
       return jsonResponse({ detail: 'not found' }, 404)
     })
-    const client = createHttpApiClient('http://localhost:8000/api', fetchMock as typeof fetch)
+    const client = createHttpApiClient('http://localhost:8000/api', withSession(fetchMock as typeof fetch))
 
     const loaded = await client.loadReport('report-1')
     const saveResult = await client.saveReportDraft(loaded.draft!, '修改后的逐字稿')
@@ -257,7 +290,7 @@ describe('HTTP API client', () => {
       }
       return jsonResponse(init?.method === 'POST' ? memory : [memory])
     })
-    const client = createHttpApiClient('http://localhost:8000/api', fetchMock as typeof fetch)
+    const client = createHttpApiClient('http://localhost:8000/api', withSession(fetchMock as typeof fetch))
 
     const saved = await client.saveTerminologyMemory({
       projectId: 'project-1',
@@ -296,7 +329,7 @@ describe('HTTP API client', () => {
       if (init?.method === 'DELETE') return new Response(null, { status: 204 })
       return jsonResponse(installed, 201)
     })
-    const client = createHttpApiClient('http://localhost:8000/api', fetchMock as typeof fetch)
+    const client = createHttpApiClient('http://localhost:8000/api', withSession(fetchMock as typeof fetch))
     const archive = new File(['synthetic zip'], 'team-weekly.zip', { type: 'application/zip' })
 
     const skill = await client.installSkill(archive, true)
@@ -321,7 +354,7 @@ describe('HTTP API client', () => {
       if (path.endsWith('/reports/report-1/confirm')) return jsonResponse(apiReport('confirmed'))
       return jsonResponse({ detail: 'not found' }, 404)
     })
-    const client = createHttpApiClient('http://localhost:8000/api', fetchMock as typeof fetch)
+    const client = createHttpApiClient('http://localhost:8000/api', withSession(fetchMock as typeof fetch))
     const draft: ReportDraft = { ...content, reportId: 'report-1' }
 
     const result = await client.confirmReport(draft, '测试逐字稿')
@@ -346,7 +379,7 @@ describe('HTTP API client', () => {
         },
       })
     })
-    const client = createHttpApiClient('http://localhost:8000/api', fetchMock as typeof fetch)
+    const client = createHttpApiClient('http://localhost:8000/api', withSession(fetchMock as typeof fetch))
     const draft: ReportDraft = { ...content, reportId: 'report-1' }
 
     const html = await client.exportReport(draft, 'html')
