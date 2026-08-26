@@ -7,9 +7,10 @@ from .errors import (
     ReportRendererError,
     TemplateSecurityError,
 )
-from .renderer import render_html, render_pdf
+from .renderer import CONTENT_SECURITY_POLICY, render_html, render_pdf
 
 __all__ = [
+    "CONTENT_SECURITY_POLICY",
     "PdfRenderError",
     "PdfRenderingUnavailableError",
     "ReportDataError",

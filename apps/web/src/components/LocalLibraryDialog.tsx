@@ -72,7 +72,7 @@ export function LocalLibraryDialog({ info, onSave, onClose }: LocalLibraryDialog
           </div>
 
           <p className="library-note">
-            浏览器版暂时不能弹出系统文件夹选择器，因此需要填写路径；桌面版会替换为原生选择器。
+            浏览器为保护本地文件权限，暂时需要手动填写文件夹的绝对路径。
             如果 Markdown 在 Obsidian 等软件中被修改，工作台会暂停覆盖并提示冲突。
           </p>
 

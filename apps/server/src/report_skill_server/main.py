@@ -1,18 +1,32 @@
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
-from functools import lru_cache
 from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
-from report_renderer import PdfRenderingUnavailableError, ReportRendererError
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from report_renderer import CONTENT_SECURITY_POLICY, PdfRenderingUnavailableError, ReportRendererError
 from skill_engine import SkillLoadError
 
 from . import __version__
-from .config import Settings, get_settings
+from .config import get_settings
 from .data_management import export_project_backup
+from .dependencies import (
+    build_provider_registry,
+    get_generation_service,
+    get_local_library,
+    get_provider_registry,
+    get_skill_registry,
+    get_store,
+    lifespan,
+)
+from .http_security import (
+    UNSAFE_METHODS,
+    host_is_trusted,
+    new_request_token,
+    origin_is_trusted,
+    request_token_is_valid,
+)
 from .local_library import LocalMarkdownLibrary
 from .models import (
     GenerateReportRequest,
@@ -29,94 +43,20 @@ from .models import (
     ReportDraftSave,
     ReportUpdate,
     ReportVersion,
+    SessionInfo,
     SkillInfo,
     TerminologyMemory,
     TerminologyMemoryCreate,
 )
-from .providers import MockChatProvider, OpenAICompatibleChatProvider, ProviderGenerationError
+from .providers import ProviderGenerationError
 from .services import ProviderRegistry, ReportGenerationService, SkillRegistry
 from .storage import NotFoundError, SQLiteStore
-
-
-@lru_cache
-def get_store() -> SQLiteStore:
-    return SQLiteStore(get_settings().database_path)
-
-
-@lru_cache
-def get_provider_registry() -> ProviderRegistry:
-    return build_provider_registry(get_settings())
-
-
-def build_provider_registry(settings: Settings) -> ProviderRegistry:
-    providers = [MockChatProvider()]
-    for connection in settings.openai_compatible_connection_configs:
-        providers.extend(
-            OpenAICompatibleChatProvider(
-                base_url=connection.base_url,
-                api_key=connection.api_key.get_secret_value(),
-                model=model,
-                provider_id=f"openai-compatible:{connection.id}:{model}",
-                provider_name=connection.name,
-            )
-            for model in connection.models
-        )
-    if (
-        settings.openai_compatible_base_url
-        and settings.openai_compatible_api_key
-        and settings.openai_compatible_model_names
-    ):
-        providers.extend(
-            [
-                OpenAICompatibleChatProvider(
-                    base_url=settings.openai_compatible_base_url,
-                    api_key=settings.openai_compatible_api_key.get_secret_value(),
-                    model=model,
-                    provider_id=f"openai-compatible:{model}",
-                )
-                for model in settings.openai_compatible_model_names
-            ]
-        )
-    return ProviderRegistry(providers)
-
-
-@lru_cache
-def get_skill_registry() -> SkillRegistry:
-    settings = get_settings()
-    return SkillRegistry(settings.skills_dir, settings.user_skills_dir)
-
-
-def get_local_library(
-    store: SQLiteStore = Depends(get_store),
-) -> LocalMarkdownLibrary:
-    return LocalMarkdownLibrary(store, get_settings().projects_dir)
-
-
-def get_generation_service(
-    store: SQLiteStore = Depends(get_store),
-    providers: ProviderRegistry = Depends(get_provider_registry),
-    skills: SkillRegistry = Depends(get_skill_registry),
-    local_library: LocalMarkdownLibrary = Depends(get_local_library),
-) -> ReportGenerationService:
-    return ReportGenerationService(
-        store,
-        providers,
-        skills,
-        get_settings().artifacts_dir,
-        local_library,
-    )
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    get_settings().ensure_directories()
-    get_store().initialize()
-    yield
 
 
 def create_app() -> FastAPI:
     active_settings = get_settings()
     app = FastAPI(title=active_settings.app_name, version=__version__, lifespan=lifespan)
+    app.state.request_token = new_request_token()
     app.add_middleware(
         CORSMiddleware,
         allow_origins=active_settings.allowed_origins,
@@ -125,9 +65,27 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    @app.middleware("http")
+    async def protect_local_mutations(request: Request, call_next):
+        if not host_is_trusted(request, active_settings):
+            return JSONResponse({"detail": "Invalid host header"}, status_code=400)
+        if request.method in UNSAFE_METHODS:
+            if not origin_is_trusted(request, active_settings):
+                return JSONResponse({"detail": "Untrusted request origin"}, status_code=403)
+            if not request_token_is_valid(request, app.state.request_token):
+                return JSONResponse({"detail": "Missing or invalid request token"}, status_code=403)
+        return await call_next(request)
+
     @app.get("/api/health", response_model=HealthResponse)
     def health() -> HealthResponse:
         return HealthResponse(version=__version__)
+
+    @app.get("/api/session", response_model=SessionInfo)
+    def get_session(request: Request, response: Response) -> SessionInfo:
+        if not origin_is_trusted(request, active_settings):
+            raise HTTPException(status_code=403, detail="Untrusted request origin")
+        response.headers["Cache-Control"] = "no-store"
+        return SessionInfo(request_token=app.state.request_token)
 
     @app.get("/api/local-library", response_model=LocalLibraryInfo)
     def get_local_library_info(
@@ -332,7 +290,13 @@ def create_app() -> FastAPI:
         service: ReportGenerationService = Depends(get_generation_service),
     ) -> HTMLResponse:
         try:
-            return HTMLResponse(service.preview_html(report_id))
+            return HTMLResponse(
+                service.preview_html(report_id),
+                headers={
+                    "Content-Security-Policy": CONTENT_SECURITY_POLICY,
+                    "X-Content-Type-Options": "nosniff",
+                },
+            )
         except NotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
@@ -394,7 +358,9 @@ def create_app() -> FastAPI:
                 headers={
                     "Content-Disposition": (
                         f"attachment; filename=report.html; filename*=UTF-8''{quote(filename)}"
-                    )
+                    ),
+                    "Content-Security-Policy": CONTENT_SECURITY_POLICY,
+                    "X-Content-Type-Options": "nosniff",
                 },
             )
         except NotFoundError as exc:
@@ -446,6 +412,9 @@ def create_app() -> FastAPI:
         skills: SkillRegistry = Depends(get_skill_registry),
         store: SQLiteStore = Depends(get_store),
     ) -> SkillInfo:
+        media_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+        if media_type != "application/zip":
+            raise HTTPException(status_code=415, detail="Skill upload must use application/zip")
         content_length = request.headers.get("content-length")
         try:
             declared_size = int(content_length) if content_length else None

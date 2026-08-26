@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from html import escape
+from html.parser import HTMLParser
 from pathlib import Path
 import re
 from typing import Any
@@ -24,25 +25,101 @@ _DOCUMENT_TITLE = "{{DOCUMENT_TITLE}}"
 _REPORT_CSS = "{{REPORT_CSS}}"
 _REPORT_CONTENT = "{{REPORT_CONTENT}}"
 
-_UNSAFE_HTML_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (
-        re.compile(
-            r"<\s*(?:script|iframe|object|embed|svg|math|form|img|video|audio|source|track|picture|link|base|canvas)\b",
-            re.I,
-        ),
-        "executable or resource-loading HTML",
-    ),
-    (re.compile(r"\son[a-z]+\s*=", re.I), "inline event handler"),
-    (
-        re.compile(
-            r"\b(?:src|srcset|href|xlink:href|poster|background|action|formaction|style)\s*=",
-            re.I,
-        ),
-        "external or local resource reference",
-    ),
-    (re.compile(r"javascript\s*:", re.I), "javascript URL"),
-    (re.compile(r"<\s*meta\b[^>]*http-equiv\s*=", re.I), "active meta directive"),
+CONTENT_SECURITY_POLICY = (
+    "default-src 'none'; script-src 'none'; connect-src 'none'; img-src 'none'; "
+    "media-src 'none'; font-src 'none'; object-src 'none'; frame-src 'none'; "
+    "child-src 'none'; worker-src 'none'; style-src 'unsafe-inline'; "
+    "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 )
+
+_ALLOWED_TEMPLATE_TAGS = {
+    "html", "head", "meta", "title", "style", "body", "main", "header", "footer",
+    "section", "article", "aside", "nav", "div", "span", "p", "h1", "h2", "h3",
+    "h4", "h5", "h6", "table", "thead", "tbody", "tfoot", "tr", "th", "td",
+    "ul", "ol", "li", "br", "hr", "time", "strong", "em", "small",
+}
+_GLOBAL_TEMPLATE_ATTRIBUTES = {"class", "id", "lang", "dir", "role", "title", "hidden"}
+_TAG_TEMPLATE_ATTRIBUTES = {
+    "meta": {"charset", "name", "content"},
+    "th": {"colspan", "rowspan", "scope"},
+    "td": {"colspan", "rowspan"},
+    "time": {"datetime"},
+}
+
+
+class _SafeTemplateParser(HTMLParser):
+    """Validate template markup using the browser-facing token structure."""
+
+    _VOID_TAGS = {"meta", "br", "hr"}
+    _PLACEHOLDER_CONTEXTS = {
+        _DOCUMENT_TITLE: "title",
+        _REPORT_CSS: "style",
+        _REPORT_CONTENT: "body",
+    }
+
+    def __init__(self, *, allow_renderer_csp: bool = False) -> None:
+        super().__init__(convert_charrefs=True)
+        self.allow_renderer_csp = allow_renderer_csp
+        self.stack: list[str] = []
+        self.placeholder_counts = {placeholder: 0 for placeholder in self._PLACEHOLDER_CONTEXTS}
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self._validate_element(tag, attrs)
+        normalized_tag = tag.lower()
+        if normalized_tag not in self._VOID_TAGS:
+            self.stack.append(normalized_tag)
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self._validate_element(tag, attrs)
+
+    def handle_endtag(self, tag: str) -> None:
+        normalized_tag = tag.lower()
+        if normalized_tag not in _ALLOWED_TEMPLATE_TAGS:
+            raise TemplateSecurityError(f"report.html contains forbidden <{tag}> element")
+        if not self.stack or self.stack[-1] != normalized_tag:
+            raise TemplateSecurityError(f"report.html contains mismatched </{tag}> element")
+        self.stack.pop()
+
+    def handle_data(self, data: str) -> None:
+        current = self.stack[-1] if self.stack else None
+        for placeholder, expected_tag in self._PLACEHOLDER_CONTEXTS.items():
+            count = data.count(placeholder)
+            if count and current != expected_tag:
+                raise TemplateSecurityError(
+                    f"{placeholder} must be plain text inside <{expected_tag}>"
+                )
+            self.placeholder_counts[placeholder] += count
+
+    def handle_pi(self, data: str) -> None:
+        raise TemplateSecurityError("report.html contains a processing instruction")
+
+    def unknown_decl(self, data: str) -> None:
+        raise TemplateSecurityError("report.html contains an unsupported declaration")
+
+    def _validate_element(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        normalized_tag = tag.lower()
+        if normalized_tag not in _ALLOWED_TEMPLATE_TAGS:
+            raise TemplateSecurityError(f"report.html contains forbidden <{tag}> element")
+        allowed = _GLOBAL_TEMPLATE_ATTRIBUTES | _TAG_TEMPLATE_ATTRIBUTES.get(normalized_tag, set())
+        attribute_map = {name.lower(): value for name, value in attrs}
+        if "http-equiv" in attribute_map:
+            is_renderer_csp = (
+                self.allow_renderer_csp
+                and normalized_tag == "meta"
+                and (attribute_map["http-equiv"] or "").lower() == "content-security-policy"
+                and attribute_map.get("content") == CONTENT_SECURITY_POLICY
+            )
+            if not is_renderer_csp:
+                raise TemplateSecurityError("report.html contains an active meta directive")
+            allowed = allowed | {"http-equiv"}
+        for raw_name, _value in attrs:
+            name = raw_name.lower()
+            if name.startswith("on"):
+                raise TemplateSecurityError("report.html contains an inline event handler")
+            if name not in allowed and not name.startswith(("aria-", "data-")):
+                raise TemplateSecurityError(
+                    f"report.html contains forbidden {raw_name} attribute on <{tag}>"
+                )
 
 _UNSAFE_CSS_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"@import\b", re.I), "CSS import"),
@@ -106,6 +183,8 @@ def render_html(
     result = result.replace(_REPORT_CONTENT, body)
     if re.search(r"{{[A-Z0-9_]+}}", result):
         raise TemplateSecurityError("template contains an unsupported placeholder")
+    result = _inject_content_security_policy(result)
+    _validate_rendered_document(result)
     return result
 
 
@@ -139,13 +218,16 @@ def render_pdf(
     destination.parent.mkdir(parents=True, exist_ok=True)
 
     browser = None
+    context = None
     try:
         with sync_playwright() as playwright:
             launch_options: dict[str, Any] = {"headless": True}
             if chromium_executable is not None:
                 launch_options["executable_path"] = str(chromium_executable)
             browser = playwright.chromium.launch(**launch_options)
-            page = browser.new_page()
+            context = browser.new_context(java_script_enabled=False)
+            page = context.new_page()
+            page.route("**/*", lambda route: route.abort())
             page.set_content(html, wait_until="load")
             page.emulate_media(media="print")
             page.pdf(
@@ -155,6 +237,8 @@ def render_pdf(
                 prefer_css_page_size=True,
                 margin={"top": "0", "right": "0", "bottom": "0", "left": "0"},
             )
+            context.close()
+            context = None
             browser.close()
             browser = None
     except playwright_error as exc:
@@ -165,6 +249,11 @@ def render_pdf(
             ) from exc
         raise PdfRenderError(f"Chromium could not render the PDF: {message}") from exc
     finally:
+        if context is not None:
+            try:
+                context.close()
+            except Exception:
+                pass
         if browser is not None:
             try:
                 browser.close()
@@ -202,9 +291,19 @@ def _validate_template(template: str, css: str) -> None:
             raise TemplateSecurityError(
                 f"report.html must contain exactly one {placeholder} placeholder"
             )
-    for pattern, label in _UNSAFE_HTML_PATTERNS:
-        if pattern.search(template):
-            raise TemplateSecurityError(f"report.html contains forbidden {label}")
+    parser = _SafeTemplateParser()
+    try:
+        parser.feed(template)
+        parser.close()
+    except (TemplateSecurityError, ValueError) as exc:
+        if isinstance(exc, TemplateSecurityError):
+            raise
+        raise TemplateSecurityError(f"report.html could not be parsed safely: {exc}") from exc
+    if parser.stack:
+        raise TemplateSecurityError("report.html contains unclosed elements")
+    for placeholder in (_DOCUMENT_TITLE, _REPORT_CSS, _REPORT_CONTENT):
+        if parser.placeholder_counts[placeholder] != 1:
+            raise TemplateSecurityError(f"{placeholder} is not in its required element")
     for pattern, label in _UNSAFE_CSS_PATTERNS:
         if pattern.search(template):
             raise TemplateSecurityError(f"report.html contains forbidden {label}")
@@ -215,6 +314,30 @@ def _validate_template(template: str, css: str) -> None:
         known_placeholders_removed = known_placeholders_removed.replace(placeholder, "")
     if "{{" in known_placeholders_removed or "}}" in known_placeholders_removed:
         raise TemplateSecurityError("report.html contains an unsupported placeholder")
+
+
+def _validate_rendered_document(document: str) -> None:
+    parser = _SafeTemplateParser(allow_renderer_csp=True)
+    try:
+        parser.feed(document)
+        parser.close()
+    except (TemplateSecurityError, ValueError) as exc:
+        if isinstance(exc, TemplateSecurityError):
+            raise
+        raise TemplateSecurityError(f"rendered HTML could not be parsed safely: {exc}") from exc
+    if parser.stack:
+        raise TemplateSecurityError("rendered HTML contains unclosed elements")
+
+
+def _inject_content_security_policy(document: str) -> str:
+    meta = (
+        '<meta http-equiv="Content-Security-Policy" '
+        f'content="{CONTENT_SECURITY_POLICY}">'
+    )
+    result, count = re.subn(r"(<head\b[^>]*>)", rf"\1{meta}", document, count=1, flags=re.I)
+    if count != 1:
+        raise TemplateSecurityError("report.html must contain exactly one <head> element")
+    return result
 
 
 def _render_report(report: Mapping[str, Any]) -> str:

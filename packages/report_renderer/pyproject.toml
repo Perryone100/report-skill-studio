@@ -1,13 +1,14 @@
 [project]
 name = "report-skill-renderer"
-version = "0.1.0"
+version = "0.4.0"
+license = "MIT"
 description = "Deterministic HTML and PDF rendering for Report Skill Studio"
 requires-python = ">=3.11"
 dependencies = []
 
 [project.optional-dependencies]
 pdf = ["playwright>=1.46,<2"]
-test = ["pytest>=8,<9"]
+test = ["pytest>=9.0.3,<10"]
 
 [build-system]
 requires = ["hatchling"]

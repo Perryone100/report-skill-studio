@@ -124,6 +124,7 @@ def test_preserves_user_confirmed_business_text(report: dict) -> None:
         ('<img src="https://example.test/a.png">', ""),
         ('<img srcset="asset.png 1x, asset-2x.png 2x">', ""),
         ('<div onclick="alert(1)">x</div>', ""),
+        ('<body/onload="alert(1)">', ""),
         ('<div style="background-image: url(asset.png)">x</div>', ""),
         ("", "@import 'evil.css';"),
         ("", "body { background: url(https://example.test/a.png); }"),
@@ -195,9 +196,93 @@ def test_missing_chromium_error_is_actionable(
         render_pdf(report, TEMPLATE_DIR, tmp_path / "report.pdf")
 
 
+def test_pdf_disables_javascript_and_blocks_network_before_loading_html(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, report: dict
+) -> None:
+    events: list[object] = []
+
+    class FakePlaywrightError(Exception):
+        pass
+
+    class FakePage:
+        def route(self, pattern: str, _handler: object) -> None:
+            events.append(("route", pattern))
+
+        def set_content(self, _html: str, *, wait_until: str) -> None:
+            events.append(("content", wait_until))
+
+        def emulate_media(self, *, media: str) -> None:
+            events.append(("media", media))
+
+        def pdf(self, **options: object) -> None:
+            Path(str(options["path"])).write_bytes(b"synthetic-pdf")
+
+    class FakeContext:
+        def new_page(self) -> FakePage:
+            return FakePage()
+
+        def close(self) -> None:
+            events.append("context-closed")
+
+    class FakeBrowser:
+        def new_context(self, **options: object) -> FakeContext:
+            events.append(("context", options))
+            return FakeContext()
+
+        def close(self) -> None:
+            events.append("browser-closed")
+
+    class FakeChromium:
+        def launch(self, **_options: object) -> FakeBrowser:
+            return FakeBrowser()
+
+    class FakePlaywright:
+        chromium = FakeChromium()
+
+    class FakeManager:
+        def __enter__(self) -> FakePlaywright:
+            return FakePlaywright()
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    monkeypatch.setattr(
+        renderer_module,
+        "_load_sync_playwright",
+        lambda: (lambda: FakeManager(), FakePlaywrightError),
+    )
+
+    output = render_pdf(report, TEMPLATE_DIR, tmp_path / "report.pdf")
+
+    assert output.read_bytes() == b"synthetic-pdf"
+    assert ("context", {"java_script_enabled": False}) in events
+    assert events.index(("route", "**/*")) < events.index(("content", "load"))
+
+
 def test_pdf_output_requires_pdf_extension(report: dict, tmp_path: Path) -> None:
     with pytest.raises(ReportDataError, match="end with .pdf"):
         render_pdf(report, TEMPLATE_DIR, tmp_path / "report.html")
+
+
+def test_rendered_html_contains_standalone_csp(report: dict) -> None:
+    html = render_html(report, TEMPLATE_DIR)
+
+    assert 'http-equiv="Content-Security-Policy"' in html
+    assert "script-src 'none'" in html
+
+
+def test_placeholders_must_use_fixed_safe_contexts(report: dict, tmp_path: Path) -> None:
+    (tmp_path / "report.html").write_text(
+        "{{REPORT_CSS}}<html><head><title>{{DOCUMENT_TITLE}}</title><style></style></head>"
+        "<body>{{REPORT_CONTENT}}</body></html>",
+        encoding="utf-8",
+    )
+    (tmp_path / "report.css").write_text(
+        "</style><script>unexpected()</script><style>", encoding="utf-8"
+    )
+
+    with pytest.raises(TemplateSecurityError, match="REPORT_CSS.*inside <style>"):
+        render_html(report, tmp_path)
 
 
 def test_custom_template_filenames_are_supported(report: dict, tmp_path: Path) -> None:

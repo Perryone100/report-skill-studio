@@ -1,6 +1,7 @@
 [project]
 name = "report-skill-server"
-version = "0.1.0"
+version = "0.4.0"
+license = "MIT"
 description = "Local API for Report Skill Studio"
 requires-python = ">=3.11"
 dependencies = [
@@ -18,7 +19,7 @@ report-skill-renderer = { workspace = true }
 
 [project.optional-dependencies]
 dev = [
-  "pytest>=8.3,<9",
+  "pytest>=9.0.3,<10",
   "pytest-cov>=6,<7",
 ]
 pdf = ["report-skill-renderer[pdf]"]

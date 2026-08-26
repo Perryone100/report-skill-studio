@@ -1,6 +1,7 @@
 import json
 
 import httpx
+import pytest
 
 from report_skill_server.providers import OpenAICompatibleChatProvider
 
@@ -39,3 +40,12 @@ def test_openai_compatible_provider_returns_json_object() -> None:
     )
 
     assert result["title"] == "报告"
+
+
+def test_provider_constructor_rejects_remote_http_endpoint() -> None:
+    with pytest.raises(ValueError, match="must use HTTPS"):
+        OpenAICompatibleChatProvider(
+            base_url="http://model.example/v1",
+            api_key="secret",
+            model="test-model",
+        )

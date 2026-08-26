@@ -63,6 +63,7 @@ cp .env.example .env
 | `RSS_SKILLS_DIR` | 声明式 Skill 目录，默认 `./skills` |
 | `RSS_PROJECTS_DIR` | 本地 Markdown 项目库初始位置，默认 `~/Documents/Report Skill Studio` |
 | `RSS_CORS_ORIGINS` | 逗号分隔的前端来源列表 |
+| `RSS_ALLOWED_HOSTS` | 逗号分隔的本地 API Host；默认仅回环地址和测试 Host |
 | `RSS_OPENAI_COMPATIBLE_CONNECTIONS` | 多组独立地址、密钥和模型的单行 JSON 数组 |
 | `RSS_OPENAI_COMPATIBLE_BASE_URL` | 可选兼容服务地址，不含 `/chat/completions` |
 | `RSS_OPENAI_COMPATIBLE_API_KEY` | 可选兼容服务密钥 |
@@ -72,7 +73,7 @@ cp .env.example .env
 | `VITE_USE_MOCK_API` | 设为 `true` 时显式启用前端 mock API；默认 `false` |
 | `RSS_NO_OPEN` | 仅影响一键启动；设为 `true` 时不自动打开浏览器 |
 
-地址、密钥和至少一个模型同时设置后，服务端才会注册对应的 OpenAI-compatible 写作模型；保持为空时，开发环境只提供不会联网的 `mock` provider。旧变量中的多个模型共用一组地址和密钥；`RSS_OPENAI_COMPATIBLE_CONNECTIONS` 中每个对象使用独立连接，格式如下：
+地址、密钥和至少一个模型同时设置后，服务端才会注册对应的 OpenAI-compatible 写作模型；保持为空时，开发环境只提供不会联网的 `mock` provider。远程模型地址必须使用 HTTPS；只有 `localhost`、`127.0.0.0/8` 和 `::1` 等回环地址可使用 HTTP。旧变量中的多个模型共用一组地址和密钥；`RSS_OPENAI_COMPATIBLE_CONNECTIONS` 中每个对象使用独立连接，格式如下：
 
 ```dotenv
 RSS_OPENAI_COMPATIBLE_CONNECTIONS='[{"id":"deepseek","name":"DeepSeek","base_url":"https://api.deepseek.com","api_key":"replace-in-local-env","models":["deepseek-chat"]},{"id":"gateway","name":"内部网关","base_url":"http://127.0.0.1:9000/v1","api_key":"replace-in-local-env","models":["writing-standard","writing-economy"]}]'
@@ -128,7 +129,8 @@ uv run --package report-skill-server uvicorn report_skill_server.main:app \
 curl http://127.0.0.1:8000/api/health
 ```
 
-OpenAPI 页面位于 `http://127.0.0.1:8000/docs`。
+OpenAPI 页面位于 `http://127.0.0.1:8000/docs`。读取接口可直接试用；写接口需先请求
+`GET /api/session`，再把返回值作为 `X-Report-Skill-Token` 请求头。日常写操作建议使用工作台界面。
 
 ### 单独启动前端
 
@@ -212,6 +214,8 @@ HTML 和 PDF 只在用户点击相应导出按钮时下载，不写入 Markdown 
 未确认报告采用“工作副本 + 检查点”两层持久化：编辑停止约 0.8 秒后，标题、逐字稿和结构化内容会写入工作副本，但不会增加版本号；模型生成、确认前保存和主动恢复才形成可恢复版本。已确认报告保持不可变，恢复其中的历史版本时会创建一份新的未确认草稿。前端会比较当前工作副本与最近检查点，保守提取短文本修改作为专词候选；候选只有在用户点击“记住”后才写入长期项目记忆。
 
 默认前端只连接 `127.0.0.1`；`mock` provider、本地数据库、Skill 加载、校验和 HTML/PDF 渲染都不向外部服务发送数据。只有用户明确配置并选择云端 provider 时，生成请求所需的逐字稿、Skill 指令和 JSON Schema 才会发送到该 provider 的 `base_url`。把 `VITE_API_BASE_URL` 改成远程地址也会让浏览器把工作台请求发送到该地址，因此只能配置为自己信任的服务。API 密钥只从服务端运行环境读取，不应持久化到 SQLite、浏览器存储或日志。
+
+服务端为浏览器写请求签发进程内会话令牌，并校验 Host 与 Origin；服务重启后前端会自动刷新令牌。HTML 产物携带严格 CSP，PDF 渲染同时关闭 JavaScript 并拦截网络请求。v0.4.0 仍是单用户本地服务，这些防护不能替代公网部署所需的认证、授权、TLS 和租户隔离。
 
 “隐私与数据管理”中的项目备份包含项目元数据、逐字稿、报告、版本、确认术语和 Markdown，不含运行环境或 API 密钥。清空历史和删除项目会先校验工作台上次写入的 Markdown 内容哈希；外部修改过的文件会触发 `409` 冲突，数据库和本地文件均保持不变。
 

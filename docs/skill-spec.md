@@ -57,6 +57,14 @@ adding a new block type without application code. The top-level Schema must
 require exactly the canonical editable shape with `additionalProperties: false`.
 The loader rejects an incompatible Schema before it can reach the editor.
 
+Template markup uses a static presentation allowlist: `html`, `head`, `meta`,
+`title`, `style`, `body`, `main`, `header`, `footer`, `section`, `article`,
+`aside`, `nav`, `div`, `span`, `p`, `h1`–`h6`, `table`, `thead`, `tbody`,
+`tfoot`, `tr`, `th`, `td`, `ul`, `ol`, `li`, `br`, `hr`, `time`, `strong`,
+`em`, and `small`. Resource attributes, inline event handlers, inline `style`
+attributes, and active meta directives are rejected. The renderer injects its
+own Content Security Policy into standalone HTML.
+
 ## ZIP installation
 
 The workbench can install one Skill from a `.zip` file. The archive may either
@@ -69,8 +77,8 @@ Installation validates the manifest, every referenced file, JSON Schema,
 terminology and validation YAML, renderer compatibility, and HTML/CSS template
 safety before atomically moving the Skill into `data/skills/<skill-id>`. Archives
 larger than 8 MB, expanding beyond 25 MB, containing more than 200 files, or
-containing traversal paths, links, encryption, scripts, events, or external
-resources are rejected. Skills remain declarative and are never imported as
+containing traversal paths, links, encryption, active script elements, event
+handlers, or external template resources are rejected. Skills remain declarative and are never imported as
 Python or JavaScript.
 
 ## Validation and review
